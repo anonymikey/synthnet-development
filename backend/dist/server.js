@@ -94,13 +94,34 @@ app.post('/api/v1/payments', asyncRoute(async (req, res) => {
 }));
 app.post('/api/v1/payments/:id/status', asyncRoute(async (req, res) => {
     const id = z.string().uuid().parse(req.params.id);
-    const { data: payment, error: lookupError } = await supabase.from('payments').select('id,checkout_request_id,status').eq('id', id).single();
+    const { data: payment, error: lookupError } = await supabase.from('payments').select('id,checkout_request_id,status,amount,phone_number').eq('id', id).single();
     if (lookupError || !payment?.checkout_request_id)
         throw error(404, 'Payment request not found');
     const response = await fetch(courtneyUrl('/v2/status'), { method: 'POST', headers: courtneyHeaders, body: JSON.stringify({ checkout_request_id: payment.checkout_request_id }) });
     const result = await response.json().catch(() => ({}));
     if (!response.ok)
-        throw error(response.status, result.message ?? 'Could not check payment status');
+        throw error(response.status, 'Could not check payment status');
+    const statusData = (result.data && typeof result.data === 'object' ? result.data : result);
+    const providerStatus = String(statusData.status ?? statusData.result ?? '').toLowerCase();
+    const resultCode = Number(statusData.resultCode ?? statusData.result_code ?? (providerStatus === 'completed' || providerStatus === 'success' || providerStatus === 'paid' ? 0 : NaN));
+    if (Number.isInteger(resultCode)) {
+        const amount = Number(statusData.amountKes ?? statusData.amount ?? payment.amount);
+        const phone = typeof statusData.phone === 'string' ? statusData.phone : payment.phone_number;
+        const receipt = typeof statusData.mpesaReceipt === 'string' ? statusData.mpesaReceipt : typeof statusData.mpesa_receipt === 'string' ? statusData.mpesa_receipt : undefined;
+        const description = typeof statusData.resultDesc === 'string' ? statusData.resultDesc : typeof statusData.message === 'string' ? statusData.message : providerStatus || 'Payment status update';
+        if (resultCode === 0) {
+            const { data: finalized, error: rpcError } = await supabase.rpc('process_successful_payment', { p_payment_id: payment.id, p_checkout_request_id: payment.checkout_request_id, p_amount: amount, p_mpesa_code: receipt ?? null, p_phone: phone ?? null, p_raw_callback: result, p_result_code: resultCode, p_result_description: description });
+            if (rpcError)
+                throw rpcError;
+            res.json({ data: result, finalized: finalized?.[0] ?? null });
+            return;
+        }
+        const { data: failed, error: rpcError } = await supabase.rpc('mark_failed_payment', { p_payment_id: payment.id, p_result_code: resultCode, p_result_description: description, p_raw_callback: result });
+        if (rpcError)
+            throw rpcError;
+        res.json({ data: result, finalized: { failed } });
+        return;
+    }
     res.json({ data: result });
 }));
 const rawWebhookSchema = z.object({ CheckoutRequestID: z.string().min(1), Amount: z.coerce.number().nonnegative(), MpesaReceiptNumber: z.string().min(1).optional(), ResultCode: z.coerce.number().int(), ResultDesc: z.string().optional(), Phone: z.string().min(7).optional() }).passthrough();
