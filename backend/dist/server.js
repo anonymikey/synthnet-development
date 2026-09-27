@@ -236,4 +236,7 @@ app.get('/api/v1/admin/overview', requireAdmin, asyncRoute(async (_req, res) => 
     res.json({ data: { payments: payments.data, active_sessions: sessions.data, routers: routers.data } });
 }));
 app.use((err, _req, res, _next) => { const status = typeof err === 'object' && err && 'status' in err && typeof err.status === 'number' ? err.status : 500; res.status(status).json({ error: status === 500 ? 'Internal server error' : err instanceof Error ? err.message : 'Request failed' }); });
-app.listen(env.PORT, '0.0.0.0', () => console.log(JSON.stringify({ level: 'info', operation: 'server_started', port: env.PORT })));
+export { app };
+if (process.env.NODE_ENV !== 'test') {
+    app.listen(env.PORT, '0.0.0.0', () => console.log(JSON.stringify({ level: 'info', operation: 'server_started', port: env.PORT })));
+}
