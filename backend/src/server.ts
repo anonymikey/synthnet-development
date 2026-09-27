@@ -69,6 +69,34 @@ const paymentRequestSchema = z.object({ customer_id: z.string().uuid(), package_
 const courtneyHeaders = { 'X-API-Key': env.COURTNEY_TECH_API_KEY, 'X-API-Secret': env.COURTNEY_TECH_API_SECRET, 'Content-Type': 'application/json' }
 const courtneyUrl = (path: string) => `${env.COURTNEY_BASE_URL.replace(/\/$/, '')}${path}`
 
+const adminPaymentTestSchema = z.object({ phone: z.string().min(7), packageId: z.string().uuid() })
+
+const createCourtneyPayment = async (customerId: string, input: { phone: string; packageId: string; reference: string }) => {
+  const phone = normalizeKenyanPhone(input.phone)
+  const { data: packageRow, error: packageError } = await supabase.from('packages').select('id,price').eq('id', input.packageId).eq('is_active', true).eq('status', 'ACTIVE').single()
+  if (packageError || !packageRow) throw error(400, 'Package not found')
+  const amount = Number(packageRow.price)
+  if (!Number.isInteger(amount) || amount <= 0) throw error(500, 'Package price is unavailable')
+  const { data: device } = await supabase.from('customer_devices').select('id').eq('customer_id', customerId).eq('is_active', true).order('created_at', { ascending: true }).limit(1).maybeSingle()
+  if (!device) throw error(400, 'Bind a trusted device to this admin account before running a payment test')
+  const { data: payment, error: insertError } = await supabase.from('payments').insert({ customer_id: customerId, package_id: input.packageId, device_id: device.id, phone_number: phone, amount, status: 'PENDING' }).select('id').single()
+  if (insertError || !payment) throw insertError ?? error(500, 'Could not create payment')
+  const callbackUrl = `${env.PUBLIC_API_URL.replace(/\/$/, '')}/api/v1/payments/webhook`
+  const response = await fetch(courtneyUrl('/v2/stkpush'), { method: 'POST', headers: courtneyHeaders, body: JSON.stringify({ payment_account_id: env.COURTNEY_ACCOUNT_ID, phone, amount, reference: input.reference, description: 'SynthNet admin payment test', callback_url: callbackUrl, success_callback_url: callbackUrl, confirmation_url: callbackUrl }) })
+  const result = await response.json().catch(() => ({})) as { success?: boolean; checkout_request_id?: string; merchant_request_id?: string }
+  if (!response.ok || !result.success || !result.checkout_request_id) { await supabase.from('payments').update({ status: 'FAILED', result_description: 'Payment request failed', failed_at: new Date().toISOString() }).eq('id', payment.id); throw error(response.status >= 400 ? response.status : 502, 'Payment request failed') }
+  const { error: updateError } = await supabase.from('payments').update({ checkout_request_id: result.checkout_request_id, merchant_request_id: result.merchant_request_id ?? null }).eq('id', payment.id)
+  if (updateError) throw updateError
+  return { id: payment.id, checkout_request_id: result.checkout_request_id, status: 'PENDING' }
+}
+
+app.post('/api/v1/admin/payment-tests', requireAdmin, asyncRoute(async (req, res) => {
+  const user = await getAuthenticatedUser(req)
+  const input = adminPaymentTestSchema.parse(req.body)
+  const data = await createCourtneyPayment(user.id, { phone: input.phone, packageId: input.packageId, reference: `ADM-${Date.now().toString(36).slice(-8)}` })
+  res.status(201).json({ data })
+}))
+
 app.post('/api/v1/payments', asyncRoute(async (req, res) => {
   const input = paymentRequestSchema.parse(req.body)
   const phone = normalizeKenyanPhone(input.phone)

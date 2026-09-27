@@ -1,9 +1,10 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { Activity, AlertTriangle, ArrowUpRight, Bell, Cable, Check, ChevronDown, Clock3, Download, FileText, Gauge, LayoutDashboard, Menu, MoreHorizontal, Plus, RefreshCw, Router, Search, Settings, ShieldCheck, Signal, Ticket, Users, WalletCards, Wifi, X, Zap } from 'lucide-react'
+import { Activity, AlertTriangle, ArrowUpRight, Bell, Cable, Check, ChevronDown, Clock3, Download, FileText, Gauge, LayoutDashboard, Menu, MoreHorizontal, Plus, RefreshCw, Router, Search, Settings, ShieldCheck, Signal, Ticket, Users, WalletCards, Wifi, X, Zap, Smartphone } from 'lucide-react'
+import { PaymentSandbox } from './payment-sandbox'
 
-type PageKey = 'overview' | 'router' | 'vouchers' | 'payments' | 'profiles' | 'settings'
+type PageKey = 'overview' | 'router' | 'vouchers' | 'payments' | 'sandbox' | 'profiles' | 'settings'
 type Connection = { mac: string; phone: string; ip: string; package: string; speed: string; time: string; since: string; status: string }
 
 const navItems: { key: PageKey; label: string; icon: typeof LayoutDashboard }[] = [
@@ -11,6 +12,7 @@ const navItems: { key: PageKey; label: string; icon: typeof LayoutDashboard }[] 
   { key: 'router', label: 'Router Controller', icon: Router },
   { key: 'vouchers', label: 'Voucher Generator', icon: Ticket },
   { key: 'payments', label: 'M-Pesa Ledger', icon: WalletCards },
+  { key: 'sandbox', label: 'Payment Sandbox', icon: Smartphone },
   { key: 'profiles', label: 'Bandwidth Profiles', icon: Gauge },
   { key: 'settings', label: 'System Settings', icon: Settings },
 ]
@@ -73,4 +75,4 @@ function ProfilesPage() { const [open, setOpen] = useState(false); return <div c
 
 function SettingsPage() { const [tab, setTab] = useState('General'); return <div className="page-stack"><div className="page-intro"><div><div className="eyebrow">PLATFORM / CONFIGURATION</div><h2>System Settings</h2><p>Configure your SynthNet Billing Engine workspace.</p></div><button className="primary-button"><Check />Save changes</button></div><div className="settings-layout"><div className="settings-tabs">{['General', 'Network', 'Payments', 'Router', 'Vouchers', 'Security', 'Notifications'].map(item => <button key={item} className={tab === item ? 'selected' : ''} onClick={() => setTab(item)}>{item}</button>)}</div><Panel kicker={`${tab.toUpperCase()} SETTINGS`} title={`${tab} configuration`} description={`Manage the ${tab.toLowerCase()} preferences for your operator workspace.`}>{tab === 'General' ? <div className="settings-form"><label className="field-label">SYSTEM NAME<input defaultValue="SynthNet Billing Engine" /></label><label className="field-label">NETWORK NAME<input defaultValue="SynthNet" /></label><label className="field-label">SUPPORT CONTACT<input placeholder="support@synthnet.example" /></label><label className="field-label">TIMEZONE<select defaultValue="Africa/Nairobi"><option>Africa/Nairobi</option><option>UTC</option></select></label></div> : <div className="empty-state"><ShieldCheck /><h3>{tab} controls</h3><p>Sensitive credentials remain masked and protected.</p>{tab === 'Payments' && <div className="integration-status"><ShieldCheck /> M-Pesa integration <strong>Connected</strong></div>}</div>}</Panel></div></div> }
 
-export default function SynthnetDashboard() { const [page, setPage] = useState<PageKey>('overview'); const [mobileOpen, setMobileOpen] = useState(false); const current = navItems.find(item => item.key === page); return <div className="app-shell"><Sidebar page={page} setPage={setPage} mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} /><div className="main-shell"><Header title={current?.label ?? 'Dashboard Overview'} onMenu={() => setMobileOpen(true)} /><main className="content-area">{page === 'overview' && <Overview />}{page === 'router' && <RouterPage />}{page === 'vouchers' && <VouchersPage />}{page === 'payments' && <PaymentsPage />}{page === 'profiles' && <ProfilesPage />}{page === 'settings' && <SettingsPage />}</main></div>{mobileOpen && <button className="mobile-overlay" aria-label="Close navigation" onClick={() => setMobileOpen(false)} />}</div> }
+export default function SynthnetDashboard() { const [page, setPage] = useState<PageKey>('overview'); const [mobileOpen, setMobileOpen] = useState(false); const current = navItems.find(item => item.key === page); return <div className="app-shell"><Sidebar page={page} setPage={setPage} mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} /><div className="main-shell"><Header title={current?.label ?? 'Dashboard Overview'} onMenu={() => setMobileOpen(true)} /><main className="content-area">{page === 'overview' && <Overview />}{page === 'router' && <RouterPage />}{page === 'vouchers' && <VouchersPage />}{page === 'payments' && <PaymentsPage />}{page === 'sandbox' && <PaymentSandbox />}{page === 'profiles' && <ProfilesPage />}{page === 'settings' && <SettingsPage />}</main></div>{mobileOpen && <button className="mobile-overlay" aria-label="Close navigation" onClick={() => setMobileOpen(false)} />}</div> }
