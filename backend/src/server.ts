@@ -5,6 +5,7 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import helmet from 'helmet'
 import { rateLimit } from 'express-rate-limit'
 import { z } from 'zod'
+import { normalizeKenyanPhone, parseCourtneyStatus } from './payment-logic.js'
 
 const env = z.object({
   PORT: z.coerce.number().int().positive().default(10000),
@@ -59,13 +60,6 @@ app.get('/api/v1/packages', asyncRoute(async (_req, res) => {
   res.json({ data })
 }))
 
-const normalizeKenyanPhone = (value: string) => {
-  const compact = value.replace(/[\s-]/g, '')
-  const canonical = compact.startsWith('+254') ? compact.slice(1) : compact.startsWith('0') ? `254${compact.slice(1)}` : compact
-  if (!/^254(?:7|1)\d{8}$/.test(canonical)) throw error(400, 'Invalid Kenyan phone number')
-  return canonical
-}
-
 const paymentRequestSchema = z.object({ customer_id: z.string().uuid(), package_id: z.string().uuid(), phone: z.string().min(7), amount: z.number().int().positive().max(70000).optional(), reference: z.string().regex(/^[A-Za-z0-9-]{1,12}$/), description: z.string().max(13).optional() })
 const courtneyHeaders = { 'X-API-Key': env.COURTNEY_TECH_API_KEY, 'X-API-Secret': env.COURTNEY_TECH_API_SECRET, 'Content-Type': 'application/json' }
 const courtneyUrl = (path: string) => `${env.COURTNEY_BASE_URL.replace(/\/$/, '')}${path}`
@@ -92,7 +86,7 @@ app.post('/api/v1/payments', asyncRoute(async (req, res) => {
   res.status(201).json({ data: { id: payment.id, checkout_request_id: result.checkout_request_id, status: 'PENDING' } })
 }))
 
-app.post('/api/v1/payments/:id/status', asyncRoute(async (req, res) => {
+const paymentStatusHandler = asyncRoute(async (req: Request, res: Response) => {
   const id = z.string().uuid().parse(req.params.id)
   const { data: payment, error: lookupError } = await supabase.from('payments').select('id,checkout_request_id,status,amount,phone_number').eq('id', id).single()
   if (lookupError || !payment?.checkout_request_id) throw error(404, 'Payment request not found')
@@ -101,13 +95,13 @@ app.post('/api/v1/payments/:id/status', asyncRoute(async (req, res) => {
   if (!response.ok) throw error(response.status, 'Could not check payment status')
 
   const statusData = (result.data && typeof result.data === 'object' ? result.data : result) as Record<string, unknown>
-  const providerStatus = String(statusData.status ?? statusData.result ?? '').toLowerCase()
-  const resultCode = Number(statusData.resultCode ?? statusData.result_code ?? (providerStatus === 'completed' || providerStatus === 'success' || providerStatus === 'paid' ? 0 : NaN))
-  if (Number.isInteger(resultCode)) {
-    const amount = Number(statusData.amountKes ?? statusData.amount ?? payment.amount)
-    const phone = typeof statusData.phone === 'string' ? statusData.phone : payment.phone_number
-    const receipt = typeof statusData.mpesaReceipt === 'string' ? statusData.mpesaReceipt : typeof statusData.mpesa_receipt === 'string' ? statusData.mpesa_receipt : undefined
-    const description = typeof statusData.resultDesc === 'string' ? statusData.resultDesc : typeof statusData.message === 'string' ? statusData.message : providerStatus || 'Payment status update'
+  const parsedStatus = parseCourtneyStatus(statusData)
+  const resultCode = parsedStatus.resultCode
+  if (resultCode !== undefined) {
+    const amount = Number(parsedStatus.amount ?? payment.amount)
+    const phone = parsedStatus.phone ?? payment.phone_number
+    const receipt = parsedStatus.receipt
+    const description = parsedStatus.description
     if (resultCode === 0) {
       const { data: finalized, error: rpcError } = await supabase.rpc('process_successful_payment', { p_payment_id: payment.id, p_checkout_request_id: payment.checkout_request_id, p_amount: amount, p_mpesa_code: receipt ?? null, p_phone: phone ?? null, p_raw_callback: result, p_result_code: resultCode, p_result_description: description })
       if (rpcError) throw rpcError
@@ -120,7 +114,9 @@ app.post('/api/v1/payments/:id/status', asyncRoute(async (req, res) => {
     return
   }
   res.json({ data: result })
-}))
+})
+app.get('/api/v1/payments/:id/status', paymentStatusHandler)
+app.post('/api/v1/payments/:id/status', paymentStatusHandler)
 
 const rawWebhookSchema = z.object({ CheckoutRequestID: z.string().min(1), Amount: z.coerce.number().nonnegative(), MpesaReceiptNumber: z.string().min(1).optional(), ResultCode: z.coerce.number().int(), ResultDesc: z.string().optional(), Phone: z.string().min(7).optional() }).passthrough()
 const eventWebhookSchema = z.object({ event: z.string(), data: z.object({ transactionId: z.string().min(1), checkoutRequestId: z.string().optional(), amountKes: z.coerce.number().nonnegative().optional(), mpesaReceipt: z.string().nullable().optional(), phone: z.string().optional(), resultCode: z.coerce.number().int().optional(), resultDesc: z.string().optional(), status: z.string().optional() }).passthrough() }).passthrough()
