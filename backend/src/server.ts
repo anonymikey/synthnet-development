@@ -5,7 +5,7 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import helmet from 'helmet'
 import { rateLimit } from 'express-rate-limit'
 import { z } from 'zod'
-import { normalizeKenyanPhone, parseCourtneyStatus } from './payment-logic.js'
+import { normalizeKenyanPhone, parseCourtneyStatus, type CourtneyStatus } from './payment-logic.js'
 
 const env = z.object({
   PORT: z.coerce.number().int().positive().default(10000),
@@ -39,11 +39,16 @@ app.use(rateLimit({ windowMs: 60_000, limit: 120, standardHeaders: 'draft-8', le
 const asyncRoute = (handler: (req: Request, res: Response) => Promise<void>) => (req: Request, res: Response, next: NextFunction) => handler(req, res).catch(next)
 const error = (status: number, message: string) => Object.assign(new Error(message), { status })
 const authHeader = (req: Request) => req.header('authorization')?.replace(/^Bearer\s+/i, '')
-const requireAdmin = asyncRoute(async (req, _res) => {
+const getAuthenticatedUser = async (req: Request) => {
   const token = authHeader(req)
   if (!token) throw error(401, 'Authentication required')
   const { data: { user }, error: authError } = await supabase.auth.getUser(token)
   if (authError || !user) throw error(401, 'Authentication required')
+  return user
+}
+
+const requireAdmin = asyncRoute(async (req, _res) => {
+  const user = await getAuthenticatedUser(req)
   const { data: profile } = await supabase.from('admin_profiles').select('id,role,is_active').eq('id', user.id).maybeSingle()
   if (!profile?.is_active) throw error(403, 'Admin access required')
   ;(req as Request & { adminId?: string }).adminId = user.id
@@ -63,6 +68,34 @@ app.get('/api/v1/packages', asyncRoute(async (_req, res) => {
 const paymentRequestSchema = z.object({ customer_id: z.string().uuid(), package_id: z.string().uuid(), phone: z.string().min(7), amount: z.number().int().positive().max(70000).optional(), reference: z.string().regex(/^[A-Za-z0-9-]{1,12}$/), description: z.string().max(13).optional() })
 const courtneyHeaders = { 'X-API-Key': env.COURTNEY_TECH_API_KEY, 'X-API-Secret': env.COURTNEY_TECH_API_SECRET, 'Content-Type': 'application/json' }
 const courtneyUrl = (path: string) => `${env.COURTNEY_BASE_URL.replace(/\/$/, '')}${path}`
+
+const adminPaymentTestSchema = z.object({ phone: z.string().min(7), packageId: z.string().uuid() })
+
+const createCourtneyPayment = async (customerId: string, input: { phone: string; packageId: string; reference: string }) => {
+  const phone = normalizeKenyanPhone(input.phone)
+  const { data: packageRow, error: packageError } = await supabase.from('packages').select('id,price').eq('id', input.packageId).eq('is_active', true).eq('status', 'ACTIVE').single()
+  if (packageError || !packageRow) throw error(400, 'Package not found')
+  const amount = Number(packageRow.price)
+  if (!Number.isInteger(amount) || amount <= 0) throw error(500, 'Package price is unavailable')
+  const { data: device } = await supabase.from('customer_devices').select('id').eq('customer_id', customerId).eq('is_active', true).order('created_at', { ascending: true }).limit(1).maybeSingle()
+  if (!device) throw error(400, 'Bind a trusted device to this admin account before running a payment test')
+  const { data: payment, error: insertError } = await supabase.from('payments').insert({ customer_id: customerId, package_id: input.packageId, device_id: device.id, phone_number: phone, amount, status: 'PENDING' }).select('id').single()
+  if (insertError || !payment) throw insertError ?? error(500, 'Could not create payment')
+  const callbackUrl = `${env.PUBLIC_API_URL.replace(/\/$/, '')}/api/v1/payments/webhook`
+  const response = await fetch(courtneyUrl('/v2/stkpush'), { method: 'POST', headers: courtneyHeaders, body: JSON.stringify({ payment_account_id: env.COURTNEY_ACCOUNT_ID, phone, amount, reference: input.reference, description: 'SynthNet admin payment test', callback_url: callbackUrl, success_callback_url: callbackUrl, confirmation_url: callbackUrl }) })
+  const result = await response.json().catch(() => ({})) as { success?: boolean; checkout_request_id?: string; merchant_request_id?: string }
+  if (!response.ok || !result.success || !result.checkout_request_id) { await supabase.from('payments').update({ status: 'FAILED', result_description: 'Payment request failed', failed_at: new Date().toISOString() }).eq('id', payment.id); throw error(response.status >= 400 ? response.status : 502, 'Payment request failed') }
+  const { error: updateError } = await supabase.from('payments').update({ checkout_request_id: result.checkout_request_id, merchant_request_id: result.merchant_request_id ?? null }).eq('id', payment.id)
+  if (updateError) throw updateError
+  return { id: payment.id, checkout_request_id: result.checkout_request_id, status: 'PENDING' }
+}
+
+app.post('/api/v1/admin/payment-tests', requireAdmin, asyncRoute(async (req, res) => {
+  const user = await getAuthenticatedUser(req)
+  const input = adminPaymentTestSchema.parse(req.body)
+  const data = await createCourtneyPayment(user.id, { phone: input.phone, packageId: input.packageId, reference: `ADM-${Date.now().toString(36).slice(-8)}` })
+  res.status(201).json({ data })
+}))
 
 app.post('/api/v1/payments', asyncRoute(async (req, res) => {
   const input = paymentRequestSchema.parse(req.body)
@@ -141,6 +174,8 @@ app.post('/api/v1/payments/webhook', asyncRoute(async (req, res) => {
   if (normalized.code !== 0) {
     const { data, error: rpcError } = await supabase.rpc('mark_failed_payment', { p_payment_id: payment.id, p_result_code: normalized.code, p_result_description: normalized.description ?? 'Payment failed', p_raw_callback: req.body })
     if (rpcError) throw rpcError
+    // Courtney exposes cancellation as a non-zero result code in the available payloads;
+    // the current schema has no CANCELLED state, so this intentionally remains FAILED and idempotent.
     res.json({ acknowledged: true, failed: data })
     return
   }
@@ -150,21 +185,54 @@ app.post('/api/v1/payments/webhook', asyncRoute(async (req, res) => {
 }))
 
 app.get('/api/v1/payments/:id', asyncRoute(async (req, res) => {
+  const user = await getAuthenticatedUser(req)
   const id = z.string().uuid().parse(req.params.id)
-  const { data, error: dbError } = await supabase.from('payments').select('id,status,amount,phone_number,package_id,initiated_at,completed_at,failed_at').eq('id', id).maybeSingle()
+  const { data, error: dbError } = await supabase.from('payments').select('id,customer_id,status,amount,package_id,initiated_at,completed_at,failed_at').eq('id', id).maybeSingle()
   if (dbError) throw dbError
-  if (!data) throw error(404, 'Payment not found')
-  res.json({ data })
+  if (!data || data.customer_id !== user.id) throw error(404, 'Payment not found')
+  res.json({ data: { id: data.id, status: data.status, amount: data.amount, package_id: data.package_id, initiated_at: data.initiated_at, completed_at: data.completed_at, failed_at: data.failed_at } })
 }))
 
 app.get('/api/v1/sessions/:id', asyncRoute(async (req, res) => {
+  const user = await getAuthenticatedUser(req)
   const id = z.string().uuid().parse(req.params.id)
-  const { data, error: dbError } = await supabase.from('internet_sessions').select('id,status,package_id,start_time,expiry_time,is_authenticated_on_router,router_authenticated_at,disconnected_at').eq('id', id).maybeSingle()
+  const { data, error: dbError } = await supabase.from('internet_sessions').select('id,customer_id,status,package_id,start_time,expiry_time,is_authenticated_on_router,router_authenticated_at,disconnected_at').eq('id', id).maybeSingle()
   if (dbError) throw dbError
-  if (!data) throw error(404, 'Session not found')
+  if (!data || data.customer_id !== user.id) throw error(404, 'Session not found')
   const remainingSeconds = Math.max(0, Math.floor((new Date(data.expiry_time).getTime() - Date.now()) / 1000))
-  res.json({ data: { ...data, remaining_seconds: remainingSeconds } })
+  res.json({ data: { id: data.id, status: data.status, package_id: data.package_id, start_time: data.start_time, expiry_time: data.expiry_time, is_authenticated_on_router: data.is_authenticated_on_router, router_authenticated_at: data.router_authenticated_at, disconnected_at: data.disconnected_at, remaining_seconds: remainingSeconds } })
 }))
+
+export const reconcilePendingPayments = async (limit = 25) => {
+  const { data: pending, error: pendingError } = await supabase.from('payments').select('id,checkout_request_id,amount,phone_number').eq('status', 'PENDING').not('checkout_request_id', 'is', null).order('initiated_at', { ascending: true }).limit(Math.min(Math.max(limit, 1), 100))
+  if (pendingError) throw pendingError
+  const outcomes: Array<{ id: string; outcome: 'completed' | 'failed' | 'unchanged' | 'error'; error?: string }> = []
+  for (const payment of pending ?? []) {
+    try {
+      const response = await fetch(courtneyUrl('/v2/status'), { method: 'POST', headers: courtneyHeaders, body: JSON.stringify({ checkout_request_id: payment.checkout_request_id }) })
+      const result = await response.json().catch(() => ({})) as Record<string, unknown>
+      if (!response.ok) { outcomes.push({ id: payment.id, outcome: 'unchanged' }); continue }
+      const statusData = (result.data && typeof result.data === 'object' ? result.data : result) as CourtneyStatus
+      const parsed = parseCourtneyStatus(statusData)
+      if (parsed.resultCode === undefined) { outcomes.push({ id: payment.id, outcome: 'unchanged' }); continue }
+      if (parsed.resultCode === 0) {
+        const amount = Number(parsed.amount ?? payment.amount)
+        const phone = parsed.phone ? normalizeKenyanPhone(parsed.phone) : payment.phone_number
+        if (amount !== Number(payment.amount) || (parsed.phone && phone !== payment.phone_number)) throw new Error('Provider identity mismatch')
+        const { error: rpcError } = await supabase.rpc('process_successful_payment', { p_payment_id: payment.id, p_checkout_request_id: payment.checkout_request_id, p_amount: amount, p_mpesa_code: parsed.receipt ?? null, p_phone: phone, p_raw_callback: result, p_result_code: 0, p_result_description: parsed.description })
+        if (rpcError) throw rpcError
+        outcomes.push({ id: payment.id, outcome: 'completed' })
+      } else {
+        const { error: rpcError } = await supabase.rpc('mark_failed_payment', { p_payment_id: payment.id, p_result_code: parsed.resultCode, p_result_description: parsed.description, p_raw_callback: result })
+        if (rpcError) throw rpcError
+        outcomes.push({ id: payment.id, outcome: 'failed' })
+      }
+    } catch (reconciliationError) {
+      outcomes.push({ id: payment.id, outcome: 'error', error: reconciliationError instanceof Error ? reconciliationError.message : 'Reconciliation failed' })
+    }
+  }
+  return outcomes
+}
 
 app.get('/api/v1/admin/overview', requireAdmin, asyncRoute(async (_req, res) => {
   const [payments, sessions, routers] = await Promise.all([supabase.from('payments').select('id,status,amount,created_at').order('created_at', { ascending: false }).limit(100), supabase.from('internet_sessions').select('id,status,expiry_time').in('status', ['ACTIVE','PENDING']), supabase.from('router_devices').select('id,name,status,last_heartbeat_at,active_clients')])
@@ -174,4 +242,8 @@ app.get('/api/v1/admin/overview', requireAdmin, asyncRoute(async (_req, res) => 
 
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => { const status = typeof err === 'object' && err && 'status' in err && typeof err.status === 'number' ? err.status : 500; res.status(status).json({ error: status === 500 ? 'Internal server error' : err instanceof Error ? err.message : 'Request failed' }) })
 
-app.listen(env.PORT, '0.0.0.0', () => console.log(JSON.stringify({ level: 'info', operation: 'server_started', port: env.PORT })))
+export { app }
+
+if (process.env.NODE_ENV !== 'test') {
+  app.listen(env.PORT, '0.0.0.0', () => console.log(JSON.stringify({ level: 'info', operation: 'server_started', port: env.PORT })))
+}
