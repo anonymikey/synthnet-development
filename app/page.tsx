@@ -1,5 +1,5 @@
-import SynthnetDashboard from '@/components/synthnet-dashboard'
+import SynthnetLanding from '@/components/synthnet-landing'
 
 export default function Page() {
-  return <SynthnetDashboard />
+  return <SynthnetLanding />
 }
