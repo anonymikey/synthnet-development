@@ -17,6 +17,9 @@ const env = z.object({
     COURTNEY_BASE_URL: z.string().url().default('https://courtneytech.xyz/api'),
     PUBLIC_API_URL: z.string().url(),
     CORS_ORIGINS: z.string().min(1),
+    OMADA_CONTROLLER_URL: z.string().url(),
+    OMADA_ADMIN_USER: z.string().min(1),
+    OMADA_ADMIN_PASSWORD: z.string().min(1),
 }).superRefine((value, ctx) => {
     if (value.NODE_ENV === 'production' && /^(https?:\/\/)?(localhost|127\.0\.0\.1)(:|\/|$)/i.test(value.PUBLIC_API_URL)) {
         ctx.addIssue({ code: 'custom', path: ['PUBLIC_API_URL'], message: 'Production PUBLIC_API_URL must be public, not localhost' });
@@ -62,7 +65,8 @@ app.get('/api/v1/packages', asyncRoute(async (_req, res) => {
         throw dbError;
     res.json({ data });
 }));
-const paymentRequestSchema = z.object({ customer_id: z.string().uuid(), package_id: z.string().uuid(), phone: z.string().min(7), amount: z.number().int().positive().max(70000).optional(), reference: z.string().regex(/^[A-Za-z0-9-]{1,12}$/), description: z.string().max(13).optional() });
+const gatewayTypeSchema = z.enum(['mikrotik', 'omada']).default('mikrotik');
+const paymentRequestSchema = z.object({ customer_id: z.string().uuid(), package_id: z.string().uuid(), phone: z.string().min(7), amount: z.number().int().positive().max(70000).optional(), reference: z.string().regex(/^[A-Za-z0-9-]{1,12}$/), description: z.string().max(13).optional(), gateway_type: gatewayTypeSchema });
 const courtneyHeaders = { 'X-API-Key': env.COURTNEY_TECH_API_KEY, 'X-API-Secret': env.COURTNEY_TECH_API_SECRET, 'Content-Type': 'application/json' };
 const courtneyUrl = (path) => `${env.COURTNEY_BASE_URL.replace(/\/$/, '')}${path}`;
 const adminPaymentTestSchema = z.object({ phone: z.string().min(7), packageId: z.string().uuid() });
@@ -107,7 +111,7 @@ app.post('/api/v1/payments', asyncRoute(async (req, res) => {
     const amount = Number(packageRow.price);
     if (!Number.isInteger(amount) || amount <= 0)
         throw error(500, 'Package price is unavailable');
-    const { data: payment, error: insertError } = await supabase.from('payments').insert({ customer_id: input.customer_id, package_id: input.package_id, phone_number: phone, amount, status: 'PENDING' }).select('id').single();
+    const { data: payment, error: insertError } = await supabase.from('payments').insert({ customer_id: input.customer_id, package_id: input.package_id, phone_number: phone, amount, status: 'PENDING', gateway_type: input.gateway_type }).select('id').single();
     if (insertError || !payment)
         throw insertError ?? error(500, 'Could not create payment');
     const callbackBase = env.PUBLIC_API_URL.replace(/\/$/, '');
@@ -198,6 +202,35 @@ app.post('/api/v1/payments/webhook', asyncRoute(async (req, res) => {
     if (rpcError)
         throw rpcError;
     res.json({ acknowledged: true, result: data?.[0] ?? null });
+}));
+const omadaAuthSchema = z.object({
+    clientMac: z.string().regex(/^[0-9a-fA-F:-]{12,17}$/),
+    apMac: z.string().regex(/^[0-9a-fA-F:-]{12,17}$/),
+    clientIp: z.string().refine(value => { const parts = value.split('.'); return parts.length === 4 && parts.every(part => { const number = Number(part); return Number.isInteger(number) && number >= 0 && number <= 255; }); }, 'Invalid IPv4 address').optional(),
+    site: z.string().min(1).max(128).optional(),
+    redirectUrl: z.string().url().optional(),
+    token: z.string().min(1).max(512).optional(),
+    session_id: z.string().uuid().optional(),
+});
+app.post('/api/hotspot/omada-auth', asyncRoute(async (req, res) => {
+    const input = omadaAuthSchema.parse(req.body);
+    if (input.session_id) {
+        const { data: session, error: sessionError } = await supabase.from('internet_sessions').select('id,gateway_type,status,mac_address').eq('id', input.session_id).maybeSingle();
+        if (sessionError)
+            throw sessionError;
+        if (!session || session.gateway_type !== 'omada' || session.status !== 'ACTIVE')
+            throw error(403, 'Omada session is not active');
+    }
+    const controllerUrl = `${env.OMADA_CONTROLLER_URL.replace(/\/$/, '')}/api/v2/hotspot/extPortal/auth`;
+    const controllerResponse = await fetch(controllerUrl, {
+        method: 'POST',
+        headers: { Authorization: `Basic ${Buffer.from(`${env.OMADA_ADMIN_USER}:${env.OMADA_ADMIN_PASSWORD}`).toString('base64')}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientMac: input.clientMac, apMac: input.apMac, clientIp: input.clientIp, site: input.site, token: input.token }),
+    });
+    const controllerBody = await controllerResponse.json().catch(() => null);
+    if (!controllerResponse.ok)
+        throw error(502, 'Omada controller authorization failed');
+    res.status(200).json({ data: controllerBody, redirectUrl: input.redirectUrl ?? null });
 }));
 app.get('/api/v1/payments/:id', asyncRoute(async (req, res) => {
     const user = await getAuthenticatedUser(req);
