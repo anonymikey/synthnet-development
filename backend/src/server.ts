@@ -73,6 +73,90 @@ const paymentRequestSchema = z.object({ customer_id: z.string().uuid(), package_
 const courtneyHeaders = { 'X-API-Key': env.COURTNEY_TECH_API_KEY, 'X-API-Secret': env.COURTNEY_TECH_API_SECRET, 'Content-Type': 'application/json' }
 const courtneyUrl = (path: string) => `${env.COURTNEY_BASE_URL.replace(/\/$/, '')}${path}`
 
+const gatewayPaymentSchema = z.object({
+  phoneNumber: z.string().min(7).transform(normalizeKenyanPhone),
+  packageId: z.string().uuid(),
+  clientMac: z.string().regex(/^[0-9a-fA-F:-]{12,17}$/),
+  apMac: z.string().regex(/^[0-9a-fA-F:-]{12,17}$/).nullable().optional(),
+  gatewayType: z.enum(['mikrotik', 'omada']),
+})
+
+const webhookPayloadSchema = z.object({
+  CheckoutRequestID: z.string().min(1).optional(),
+  checkout_request_id: z.string().min(1).optional(),
+  transactionId: z.string().min(1).optional(),
+  checkoutRequestId: z.string().min(1).optional(),
+  ResultCode: z.coerce.number().int().optional(),
+  resultCode: z.coerce.number().int().optional(),
+  status: z.string().optional(),
+  result: z.string().optional(),
+  Amount: z.coerce.number().nonnegative().optional(),
+  amount: z.coerce.number().nonnegative().optional(),
+  amountKes: z.coerce.number().nonnegative().optional(),
+  MpesaReceiptNumber: z.string().optional(),
+  mpesaReceipt: z.string().optional(),
+  resultDesc: z.string().optional(),
+  ResultDesc: z.string().optional(),
+}).passthrough()
+
+const webhookIsAuthorized = (req: Request) => {
+  const supplied = req.header('x-courtney-tech-secret') ?? req.header('x-api-secret') ?? req.header('x-api-key')
+  return supplied === env.COURTNEY_TECH_API_SECRET || supplied === env.COURTNEY_TECH_API_KEY
+}
+
+const getWebhookValue = (payload: z.infer<typeof webhookPayloadSchema>) => {
+  const checkoutId = payload.CheckoutRequestID ?? payload.checkout_request_id ?? payload.checkoutRequestId ?? payload.transactionId
+  const resultCode = payload.ResultCode ?? payload.resultCode ?? (['completed', 'success', 'paid'].includes(String(payload.status ?? payload.result ?? '').toLowerCase()) ? 0 : 1)
+  return { checkoutId, resultCode, amount: payload.Amount ?? payload.amount ?? payload.amountKes, receipt: payload.MpesaReceiptNumber ?? payload.mpesaReceipt, description: payload.ResultDesc ?? payload.resultDesc ?? payload.status ?? payload.result ?? 'Payment status update' }
+}
+
+app.post('/api/payment/stk-push', asyncRoute(async (req, res) => {
+  const input = gatewayPaymentSchema.parse(req.body)
+  const { data: packageRow, error: packageError } = await supabase.from('packages').select('id,price,duration_minutes,download_speed_mbps,upload_speed_mbps,speed_limit_down_mbps,speed_limit_up_mbps').eq('id', input.packageId).eq('is_active', true).eq('status', 'ACTIVE').single()
+  if (packageError || !packageRow) throw error(400, 'Package not found')
+  const amount = Number(packageRow.price)
+  if (!Number.isInteger(amount) || amount <= 0) throw error(500, 'Package price is unavailable')
+  const reference = `SN-${Date.now().toString(36).slice(-10)}`
+  const callbackUrl = `${env.PUBLIC_API_URL.replace(/\/$/, '')}/api/payment/webhook`
+  const providerResponse = await fetch(courtneyUrl('/v2/stkpush'), { method: 'POST', headers: courtneyHeaders, body: JSON.stringify({ payment_account_id: env.COURTNEY_ACCOUNT_ID, phone: input.phoneNumber, amount, reference, description: 'SynthNet internet access', callback_url: callbackUrl, success_callback_url: callbackUrl, confirmation_url: callbackUrl }) })
+  const providerBody = await providerResponse.json().catch(() => ({})) as { success?: boolean; message?: string; checkout_request_id?: string; merchant_request_id?: string }
+  if (!providerResponse.ok || !providerBody.success || !providerBody.checkout_request_id) throw error(providerResponse.status >= 400 ? providerResponse.status : 502, providerBody.message ?? 'Payment request failed')
+  const { data: transaction, error: transactionError } = await supabase.from('transactions').insert({ phone_number: input.phoneNumber, amount, mpesa_checkout_id: providerBody.checkout_request_id, client_mac: input.clientMac, ap_mac: input.apMac ?? null, gateway_type: input.gatewayType, package_id: input.packageId, status: 'pending' }).select('id,mpesa_checkout_id,status').single()
+  if (transactionError || !transaction) throw transactionError ?? error(500, 'Could not create transaction')
+  res.status(201).json({ data: { transactionId: transaction.id, checkoutRequestId: transaction.mpesa_checkout_id, status: transaction.status, merchantRequestId: providerBody.merchant_request_id ?? null } })
+}))
+
+app.post('/api/payment/webhook', asyncRoute(async (req, res) => {
+  if (!webhookIsAuthorized(req)) throw error(401, 'Unauthorized webhook')
+  const payload = webhookPayloadSchema.parse(req.body)
+  const normalized = getWebhookValue(payload)
+  if (!normalized.checkoutId) throw error(400, 'Missing checkout reference')
+  const { data: transaction, error: lookupError } = await supabase.from('transactions').select('id,phone_number,amount,client_mac,ap_mac,gateway_type,package_id,status').eq('mpesa_checkout_id', normalized.checkoutId).maybeSingle()
+  if (lookupError) throw lookupError
+  if (!transaction) { res.status(200).json({ acknowledged: true }); return }
+  if (normalized.amount !== undefined && Number(transaction.amount) !== normalized.amount) throw error(400, 'Payment amount mismatch')
+  if (normalized.resultCode !== 0) {
+    const { error: updateError } = await supabase.from('transactions').update({ status: 'failed' }).eq('id', transaction.id).eq('status', 'pending')
+    if (updateError) throw updateError
+    res.json({ acknowledged: true, status: 'failed' })
+    return
+  }
+  if (transaction.status !== 'completed') {
+    const { data: packageRow, error: packageError } = await supabase.from('packages').select('duration_minutes,download_speed_mbps,upload_speed_mbps,speed_limit_down_mbps,speed_limit_up_mbps').eq('id', transaction.package_id).single()
+    if (packageError || !packageRow) throw error(500, 'Package configuration unavailable')
+    const sessionEnd = new Date(Date.now() + Number(packageRow.duration_minutes) * 60_000).toISOString()
+    const { error: updateError } = await supabase.from('transactions').update({ status: 'completed' }).eq('id', transaction.id).eq('status', 'pending')
+    if (updateError) throw updateError
+    const { error: sessionError } = await supabase.from('active_sessions').upsert({ client_mac: transaction.client_mac, ap_mac: transaction.ap_mac, gateway_type: transaction.gateway_type, session_end: sessionEnd, status: 'active', transaction_id: transaction.id }, { onConflict: 'transaction_id' })
+    if (sessionError) throw sessionError
+    if (transaction.gateway_type === 'omada') {
+      const authResponse = await fetch(`${env.PUBLIC_API_URL.replace(/\/$/, '')}/api/hotspot/omada-auth`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-SynthNet-Internal': env.COURTNEY_TECH_API_SECRET }, body: JSON.stringify({ clientMac: transaction.client_mac, apMac: transaction.ap_mac, duration_minutes: packageRow.duration_minutes, download_speed_mbps: packageRow.download_speed_mbps, upload_speed_mbps: packageRow.upload_speed_mbps, speed_limit_down_mbps: packageRow.speed_limit_down_mbps, speed_limit_up_mbps: packageRow.speed_limit_up_mbps }) })
+      if (!authResponse.ok) throw error(502, 'Omada authorization failed')
+    }
+  }
+  res.json({ acknowledged: true, status: 'completed' })
+}))
+
 const adminPaymentTestSchema = z.object({ phone: z.string().min(7), packageId: z.string().uuid() })
 
 const createCourtneyPayment = async (customerId: string, input: { phone: string; packageId: string; reference: string }) => {
