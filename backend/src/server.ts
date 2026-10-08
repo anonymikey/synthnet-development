@@ -18,6 +18,9 @@ const env = z.object({
   COURTNEY_BASE_URL: z.string().url().default('https://courtneytech.xyz/api'),
   PUBLIC_API_URL: z.string().url(),
   CORS_ORIGINS: z.string().min(1),
+  OMADA_CONTROLLER_URL: z.string().url(),
+  OMADA_ADMIN_USER: z.string().min(1),
+  OMADA_ADMIN_PASSWORD: z.string().min(1),
 }).superRefine((value, ctx) => {
   if (value.NODE_ENV === 'production' && /^(https?:\/\/)?(localhost|127\.0\.0\.1)(:|\/|$)/i.test(value.PUBLIC_API_URL)) {
     ctx.addIssue({ code: 'custom', path: ['PUBLIC_API_URL'], message: 'Production PUBLIC_API_URL must be public, not localhost' })
@@ -65,9 +68,94 @@ app.get('/api/v1/packages', asyncRoute(async (_req, res) => {
   res.json({ data })
 }))
 
-const paymentRequestSchema = z.object({ customer_id: z.string().uuid(), package_id: z.string().uuid(), phone: z.string().min(7), amount: z.number().int().positive().max(70000).optional(), reference: z.string().regex(/^[A-Za-z0-9-]{1,12}$/), description: z.string().max(13).optional() })
+const gatewayTypeSchema = z.enum(['mikrotik', 'omada']).default('mikrotik')
+const paymentRequestSchema = z.object({ customer_id: z.string().uuid(), package_id: z.string().uuid(), phone: z.string().min(7), amount: z.number().int().positive().max(70000).optional(), reference: z.string().regex(/^[A-Za-z0-9-]{1,12}$/), description: z.string().max(13).optional(), gateway_type: gatewayTypeSchema })
 const courtneyHeaders = { 'X-API-Key': env.COURTNEY_TECH_API_KEY, 'X-API-Secret': env.COURTNEY_TECH_API_SECRET, 'Content-Type': 'application/json' }
 const courtneyUrl = (path: string) => `${env.COURTNEY_BASE_URL.replace(/\/$/, '')}${path}`
+
+const gatewayPaymentSchema = z.object({
+  phoneNumber: z.string().min(7).transform(normalizeKenyanPhone),
+  packageId: z.string().uuid(),
+  clientMac: z.string().regex(/^[0-9a-fA-F:-]{12,17}$/),
+  apMac: z.string().regex(/^[0-9a-fA-F:-]{12,17}$/).nullable().optional(),
+  gatewayType: z.enum(['mikrotik', 'omada']),
+})
+
+const webhookPayloadSchema = z.object({
+  CheckoutRequestID: z.string().min(1).optional(),
+  checkout_request_id: z.string().min(1).optional(),
+  transactionId: z.string().min(1).optional(),
+  checkoutRequestId: z.string().min(1).optional(),
+  ResultCode: z.coerce.number().int().optional(),
+  resultCode: z.coerce.number().int().optional(),
+  status: z.string().optional(),
+  result: z.string().optional(),
+  Amount: z.coerce.number().nonnegative().optional(),
+  amount: z.coerce.number().nonnegative().optional(),
+  amountKes: z.coerce.number().nonnegative().optional(),
+  MpesaReceiptNumber: z.string().optional(),
+  mpesaReceipt: z.string().optional(),
+  resultDesc: z.string().optional(),
+  ResultDesc: z.string().optional(),
+}).passthrough()
+
+const webhookIsAuthorized = (req: Request) => {
+  const supplied = req.header('x-courtney-tech-secret') ?? req.header('x-api-secret') ?? req.header('x-api-key')
+  return supplied === env.COURTNEY_TECH_API_SECRET || supplied === env.COURTNEY_TECH_API_KEY
+}
+
+const getWebhookValue = (payload: z.infer<typeof webhookPayloadSchema>) => {
+  const checkoutId = payload.CheckoutRequestID ?? payload.checkout_request_id ?? payload.checkoutRequestId ?? payload.transactionId
+  const resultCode = payload.ResultCode ?? payload.resultCode ?? (['completed', 'success', 'paid'].includes(String(payload.status ?? payload.result ?? '').toLowerCase()) ? 0 : 1)
+  return { checkoutId, resultCode, amount: payload.Amount ?? payload.amount ?? payload.amountKes, receipt: payload.MpesaReceiptNumber ?? payload.mpesaReceipt, description: payload.ResultDesc ?? payload.resultDesc ?? payload.status ?? payload.result ?? 'Payment status update' }
+}
+
+app.post('/api/payment/stk-push', asyncRoute(async (req, res) => {
+  const input = gatewayPaymentSchema.parse(req.body)
+  const { data: packageRow, error: packageError } = await supabase.from('packages').select('id,price,duration_minutes,download_speed_mbps,upload_speed_mbps,speed_limit_down_mbps,speed_limit_up_mbps').eq('id', input.packageId).eq('is_active', true).eq('status', 'ACTIVE').single()
+  if (packageError || !packageRow) throw error(400, 'Package not found')
+  const amount = Number(packageRow.price)
+  if (!Number.isInteger(amount) || amount <= 0) throw error(500, 'Package price is unavailable')
+  const reference = `SN-${Date.now().toString(36).slice(-10)}`
+  const callbackUrl = `${env.PUBLIC_API_URL.replace(/\/$/, '')}/api/payment/webhook`
+  const providerResponse = await fetch(courtneyUrl('/v2/stkpush'), { method: 'POST', headers: courtneyHeaders, body: JSON.stringify({ payment_account_id: env.COURTNEY_ACCOUNT_ID, phone: input.phoneNumber, amount, reference, description: 'SynthNet internet access', callback_url: callbackUrl, success_callback_url: callbackUrl, confirmation_url: callbackUrl }) })
+  const providerBody = await providerResponse.json().catch(() => ({})) as { success?: boolean; message?: string; checkout_request_id?: string; merchant_request_id?: string }
+  if (!providerResponse.ok || !providerBody.success || !providerBody.checkout_request_id) throw error(providerResponse.status >= 400 ? providerResponse.status : 502, providerBody.message ?? 'Payment request failed')
+  const { data: transaction, error: transactionError } = await supabase.from('transactions').insert({ phone_number: input.phoneNumber, amount, mpesa_checkout_id: providerBody.checkout_request_id, client_mac: input.clientMac, ap_mac: input.apMac ?? null, gateway_type: input.gatewayType, package_id: input.packageId, status: 'pending' }).select('id,mpesa_checkout_id,status').single()
+  if (transactionError || !transaction) throw transactionError ?? error(500, 'Could not create transaction')
+  res.status(201).json({ data: { transactionId: transaction.id, checkoutRequestId: transaction.mpesa_checkout_id, status: transaction.status, merchantRequestId: providerBody.merchant_request_id ?? null } })
+}))
+
+app.post('/api/payment/webhook', asyncRoute(async (req, res) => {
+  if (!webhookIsAuthorized(req)) throw error(401, 'Unauthorized webhook')
+  const payload = webhookPayloadSchema.parse(req.body)
+  const normalized = getWebhookValue(payload)
+  if (!normalized.checkoutId) throw error(400, 'Missing checkout reference')
+  const { data: transaction, error: lookupError } = await supabase.from('transactions').select('id,phone_number,amount,client_mac,ap_mac,gateway_type,package_id,status').eq('mpesa_checkout_id', normalized.checkoutId).maybeSingle()
+  if (lookupError) throw lookupError
+  if (!transaction) { res.status(200).json({ acknowledged: true }); return }
+  if (normalized.amount !== undefined && Number(transaction.amount) !== normalized.amount) throw error(400, 'Payment amount mismatch')
+  if (normalized.resultCode !== 0) {
+    const { error: updateError } = await supabase.from('transactions').update({ status: 'failed' }).eq('id', transaction.id).eq('status', 'pending')
+    if (updateError) throw updateError
+    res.json({ acknowledged: true, status: 'failed' })
+    return
+  }
+  if (transaction.status !== 'completed') {
+    const { data: packageRow, error: packageError } = await supabase.from('packages').select('duration_minutes,download_speed_mbps,upload_speed_mbps,speed_limit_down_mbps,speed_limit_up_mbps').eq('id', transaction.package_id).single()
+    if (packageError || !packageRow) throw error(500, 'Package configuration unavailable')
+    const sessionEnd = new Date(Date.now() + Number(packageRow.duration_minutes) * 60_000).toISOString()
+    const { error: updateError } = await supabase.from('transactions').update({ status: 'completed' }).eq('id', transaction.id).eq('status', 'pending')
+    if (updateError) throw updateError
+    const { error: sessionError } = await supabase.from('active_sessions').upsert({ client_mac: transaction.client_mac, ap_mac: transaction.ap_mac, gateway_type: transaction.gateway_type, session_end: sessionEnd, status: 'active', transaction_id: transaction.id }, { onConflict: 'transaction_id' })
+    if (sessionError) throw sessionError
+    if (transaction.gateway_type === 'omada') {
+      const authResponse = await fetch(`${env.PUBLIC_API_URL.replace(/\/$/, '')}/api/hotspot/omada-auth`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-SynthNet-Internal': env.COURTNEY_TECH_API_SECRET }, body: JSON.stringify({ clientMac: transaction.client_mac, apMac: transaction.ap_mac, duration_minutes: packageRow.duration_minutes, download_speed_mbps: packageRow.download_speed_mbps, upload_speed_mbps: packageRow.upload_speed_mbps, speed_limit_down_mbps: packageRow.speed_limit_down_mbps, speed_limit_up_mbps: packageRow.speed_limit_up_mbps }) })
+      if (!authResponse.ok) throw error(502, 'Omada authorization failed')
+    }
+  }
+  res.json({ acknowledged: true, status: 'completed' })
+}))
 
 const adminPaymentTestSchema = z.object({ phone: z.string().min(7), packageId: z.string().uuid() })
 
@@ -104,7 +192,7 @@ app.post('/api/v1/payments', asyncRoute(async (req, res) => {
   if (packageError || !packageRow) throw error(400, 'Package not found')
   const amount = Number(packageRow.price)
   if (!Number.isInteger(amount) || amount <= 0) throw error(500, 'Package price is unavailable')
-  const { data: payment, error: insertError } = await supabase.from('payments').insert({ customer_id: input.customer_id, package_id: input.package_id, phone_number: phone, amount, status: 'PENDING' }).select('id').single()
+  const { data: payment, error: insertError } = await supabase.from('payments').insert({ customer_id: input.customer_id, package_id: input.package_id, phone_number: phone, amount, status: 'PENDING', gateway_type: input.gateway_type }).select('id').single()
   if (insertError || !payment) throw insertError ?? error(500, 'Could not create payment')
   const callbackBase = env.PUBLIC_API_URL.replace(/\/$/, '')
   const callbackUrl = `${callbackBase}/api/v1/payments/webhook`
@@ -182,6 +270,35 @@ app.post('/api/v1/payments/webhook', asyncRoute(async (req, res) => {
   const { data, error: rpcError } = await supabase.rpc('process_successful_payment', { p_payment_id: payment.id, p_checkout_request_id: normalized.checkoutId, p_amount: normalized.amount, p_mpesa_code: normalized.receipt ?? null, p_phone: normalized.phone ?? null, p_raw_callback: req.body, p_result_code: normalized.code, p_result_description: normalized.description ?? 'Success' })
   if (rpcError) throw rpcError
   res.json({ acknowledged: true, result: data?.[0] ?? null })
+}))
+
+const omadaAuthSchema = z.object({
+  clientMac: z.string().regex(/^[0-9a-fA-F:-]{12,17}$/),
+  apMac: z.string().regex(/^[0-9a-fA-F:-]{12,17}$/),
+  clientIp: z.string().refine(value => { const parts = value.split('.'); return parts.length === 4 && parts.every(part => { const number = Number(part); return Number.isInteger(number) && number >= 0 && number <= 255 }) }, 'Invalid IPv4 address').optional(),
+  site: z.string().min(1).max(128).optional(),
+  redirectUrl: z.string().url().optional(),
+  token: z.string().min(1).max(512).optional(),
+  session_id: z.string().uuid().optional(),
+})
+
+app.post('/api/hotspot/omada-auth', asyncRoute(async (req, res) => {
+  const input = omadaAuthSchema.parse(req.body)
+  if (input.session_id) {
+    const { data: session, error: sessionError } = await supabase.from('internet_sessions').select('id,gateway_type,status,mac_address').eq('id', input.session_id).maybeSingle()
+    if (sessionError) throw sessionError
+    if (!session || session.gateway_type !== 'omada' || session.status !== 'ACTIVE') throw error(403, 'Omada session is not active')
+  }
+
+  const controllerUrl = `${env.OMADA_CONTROLLER_URL.replace(/\/$/, '')}/api/v2/hotspot/extPortal/auth`
+  const controllerResponse = await fetch(controllerUrl, {
+    method: 'POST',
+    headers: { Authorization: `Basic ${Buffer.from(`${env.OMADA_ADMIN_USER}:${env.OMADA_ADMIN_PASSWORD}`).toString('base64')}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ clientMac: input.clientMac, apMac: input.apMac, clientIp: input.clientIp, site: input.site, token: input.token }),
+  })
+  const controllerBody = await controllerResponse.json().catch(() => null)
+  if (!controllerResponse.ok) throw error(502, 'Omada controller authorization failed')
+  res.status(200).json({ data: controllerBody, redirectUrl: input.redirectUrl ?? null })
 }))
 
 app.get('/api/v1/payments/:id', asyncRoute(async (req, res) => {

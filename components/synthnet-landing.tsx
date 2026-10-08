@@ -15,6 +15,16 @@ const workflow = [
 ] as const
 
 const states = ['PENDING', 'PROCESSING', 'AUTHORIZED', 'ACTIVE', 'EXPIRING', 'EXPIRED']
+type GatewayType = 'OMADA' | 'MIKROTIK'
+
+function getGatewayType(search: string): GatewayType {
+  const params = new URLSearchParams(search)
+  return params.has('clientMac') && params.has('apMac') ? 'OMADA' : 'MIKROTIK'
+}
+
+function gatewayLabel(gatewayType: GatewayType) {
+  return gatewayType === 'OMADA' ? 'TP-LINK OMADA' : 'MIKROTIK'
+}
 
 function Node({ icon: Icon, label, tone = '' }: { icon: typeof Globe2; label: string; tone?: string }) {
   return <div className={`landing-node ${tone}`}><div className="landing-node-icon"><Icon /></div><span>{label}</span></div>
@@ -24,9 +34,9 @@ function PacketLine({ vertical = false }: { vertical?: boolean }) {
   return <div className={`packet-line ${vertical ? 'vertical' : ''}`}><i /><i /><i /></div>
 }
 
-function ArchitectureVisual() {
-  return <div className="architecture-visual" aria-label="Animated SynthNet network architecture diagram">
-    <div className="arch-column physical"><div className="arch-caption">PHYSICAL NETWORK</div><Node icon={Globe2} label="Internet" /><PacketLine vertical /><Node icon={Radio} label="ISP / LTE / 5G" tone="blue" /><PacketLine vertical /><Node icon={Router} label="MikroTik gateway" tone="green" /><PacketLine vertical /><Node icon={WifiIcon} label="Access point" tone="purple" /><div className="client-row"><Node icon={Smartphone} label="Client" /><Node icon={Smartphone} label="Client" /><Node icon={Smartphone} label="Client" /></div></div>
+function ArchitectureVisual({ gatewayType = 'MIKROTIK' }: { gatewayType?: GatewayType }) {
+  return <div className="architecture-visual" data-gateway={gatewayType.toLowerCase()} aria-label={`Animated SynthNet ${gatewayLabel(gatewayType)} network architecture diagram`}>
+    <div className="arch-column physical"><div className="arch-caption">PHYSICAL NETWORK</div><Node icon={Globe2} label="Internet" /><PacketLine vertical /><Node icon={Radio} label="ISP / LTE / 5G" tone="blue" /><PacketLine vertical /><Node icon={Router} label={`${gatewayLabel(gatewayType)} gateway`} tone="green" /><PacketLine vertical /><Node icon={WifiIcon} label="Access point" tone="purple" /><div className="client-row"><Node icon={Smartphone} label="Client" /><Node icon={Smartphone} label="Client" /><Node icon={Smartphone} label="Client" /></div></div>
     <div className="arch-bridge"><span>CONTROL PLANE</span><PacketLine /><Sparkles /></div>
     <div className="arch-column cloud"><div className="arch-caption">SYNTHNET CONTROL PLANE</div><Node icon={Command} label="SynthNet" tone="green" /><div className="cloud-grid"><Node icon={Cloud} label="Vercel" /><Node icon={Server} label="Render" /><Node icon={ShieldCheck} label="Supabase" /><Node icon={Cpu} label="Courtney" /></div><PacketLine vertical /><Node icon={Radio} label="M-Pesa" tone="amber" /></div>
   </div>
@@ -43,11 +53,17 @@ function PaymentDemo() {
 
 export default function SynthnetLanding() {
   const [menuOpen, setMenuOpen] = useState(false)
-  return <main className="landing-page">
+  const [gatewayType, setGatewayType] = useState<GatewayType>('MIKROTIK')
+
+  useEffect(() => {
+    setGatewayType(getGatewayType(window.location.search))
+  }, [])
+
+  return <main className="landing-page" data-gateway={gatewayType.toLowerCase()}>
     <nav className="landing-nav"><a href="#top" className="landing-brand"><span><Network /></span><b>SYNTHNET</b><small>NETWORK CONTROL</small></a><div className={`landing-links ${menuOpen ? 'open' : ''}`}><a href="#workflow" onClick={() => setMenuOpen(false)}>How it works</a><a href="#architecture" onClick={() => setMenuOpen(false)}>Architecture</a><a href="#security" onClick={() => setMenuOpen(false)}>Security</a><a href="#scale" onClick={() => setMenuOpen(false)}>Future scale</a></div><div className="landing-nav-actions"><a className="nav-admin-link" href="/admin">Admin sign in <ArrowRight /></a><button className="landing-menu" onClick={() => setMenuOpen(value => !value)} aria-label="Toggle navigation"><Menu /></button></div></nav>
     <section className="landing-hero" id="top"><div className="hero-grid" /><div className="hero-glow hero-glow-one" /><div className="hero-glow hero-glow-two" /><div className="hero-copy"><div className="landing-eyebrow"><span className="pulse-dot" />PRIVATE NETWORK OPERATIONS PLATFORM</div><h1>Connect.<br /><em>Control.</em><br />Automate.</h1><p>SynthNet coordinates network access, customer payments, internet sessions, and router authorization in one intelligent control plane.</p><div className="hero-actions"><a className="landing-button primary" href="#workflow">Explore SynthNet <ArrowDown /></a><a className="landing-button secondary" href="/admin">Admin sign in <ArrowRight /></a></div><div className="hero-note"><LockKeyhole /> Built for our network today. Designed to scale beyond it.</div></div><div className="hero-visual"><ArchitectureVisual /></div><div className="scroll-cue"><span>SCROLL TO EXPLORE</span><ArrowDown /></div></section>
     <section className="landing-section workflow-section" id="workflow"><div className="section-heading"><div><div className="landing-eyebrow">THE ACCESS LIFECYCLE</div><h2>From first connection<br /><span>to internet access.</span></h2></div><p>Every handoff is visible, controlled, and designed to keep the customer experience moving.</p></div><div className="workflow-grid">{workflow.map(([number, title, description, Icon], index) => <div className="workflow-card" key={number}><div className="workflow-number">{number}</div><div className="workflow-icon"><Icon /></div><h3>{title}</h3><p>{description}</p>{index < workflow.length - 1 && <div className="workflow-connector"><ArrowRight /></div>}</div>)}</div></section>
-    <section className="landing-section architecture-section" id="architecture"><div className="section-heading centered"><div><div className="landing-eyebrow">ONE COORDINATED SYSTEM</div><h2>Infrastructure that<br /><span>moves as one.</span></h2></div><p>Physical network operations and cloud control stay in sync without exposing the complexity to the customer.</p></div><ArchitectureVisual /></section>
+    <section className="landing-section architecture-section" id="architecture"><div className="section-heading centered"><div><div className="landing-eyebrow">ONE COORDINATED SYSTEM</div><h2>Infrastructure that<br /><span>moves as one.</span></h2></div><p>Physical network operations and cloud control stay in sync without exposing the complexity to the customer.</p></div><ArchitectureVisual gatewayType={gatewayType} /></section>
     <section className="landing-section payment-section"><div className="section-heading"><div><div className="landing-eyebrow">VISUAL DEMONSTRATION · NO LIVE REQUESTS</div><h2>A payment flow<br /><span>with no blind spots.</span></h2></div><p>This interactive visual shows the experience from package selection to authorization. It is a presentation only — no provider, payment, or customer data is connected.</p></div><PaymentDemo /></section>
     <section className="landing-section lifecycle-section"><div className="section-heading centered"><div><div className="landing-eyebrow">SESSION INTELLIGENCE</div><h2>Every session has<br /><span>a clear state.</span></h2></div></div><div className="lifecycle-track">{states.map((state, index) => <div className={`lifecycle-state state-${index}`} key={state}><div className="lifecycle-dot"><span /></div><strong>{state}</strong><small>{['Request received', 'Payment in flight', 'Policy approved', 'Access is live', 'Time is running out', 'Access closed'][index]}</small>{index < states.length - 1 && <div className="lifecycle-connector" />}</div>)}</div></section>
     <section className="landing-section control-section"><div className="control-copy"><div className="landing-eyebrow">OPERATOR CONTROL CENTER</div><h2>A clear view of<br /><span>the whole network.</span></h2><p>One focused workspace for sessions, payments, packages, router jobs, and network health. The admin dashboard stays protected behind authenticated access.</p><a className="landing-button secondary" href="/admin">Open admin dashboard <ArrowRight /></a></div><div className="dashboard-preview"><div className="preview-top"><span className="preview-dots">● ● ●</span><span>SYNTHNET / OPERATIONS</span><span className="preview-live"><i />ALL SYSTEMS OPERATIONAL</span></div><div className="preview-body"><div className="preview-sidebar"><b><Network /> SYNTHNET</b><span className="selected">Dashboard Overview</span><span>Router Controller</span><span>M-Pesa Ledger</span><span>Bandwidth Profiles</span></div><div className="preview-main"><div className="preview-heading"><small>SATURDAY · 12:48 PM EAT</small><h3>Dashboard Overview</h3></div><div className="preview-metrics"><div><small>ACTIVE USERS</small><strong>24</strong><i className="lime" /></div><div><small>ONLINE SESSIONS</small><strong>21</strong><i className="blue" /></div><div><small>ROUTER STATUS</small><strong>ONLINE</strong><i className="purple" /></div></div><div className="preview-chart"><span /><span /><span /><span /><span /><span /><span /><span /></div></div></div></div></section>
