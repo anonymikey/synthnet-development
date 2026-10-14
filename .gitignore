@@ -1,0 +1,21 @@
+# dependencies
+/node_modules
+
+# next.js
+/.next/
+/out/
+
+# release archives (created by scripts/package-release.sh)
+/release/
+
+# local env files (never commit secrets)
+.env
+.env.local
+.env.*.local
+
+# misc
+.DS_Store
+Thumbs.db
+*.tsbuildinfo
+npm-debug.log*
+.vercel
