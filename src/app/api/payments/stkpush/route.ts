@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 const PHONE_PATTERN = /^(?:\+?254|0)[17]\d{8}$/;
 
@@ -25,8 +26,29 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Payments are not configured yet." }, { status: 503 });
   }
 
+  const clientMac = String(body?.clientMac ?? "unknown").trim().slice(0, 64);
+  const apMac = String(body?.apMac ?? "").trim().slice(0, 64) || null;
+  const gatewayType = body?.gatewayType === "omada" ? "omada" : "mikrotik";
+  const supabase = createAdminClient();
+  const { data: transaction, error: transactionError } = await supabase
+    .from("transactions")
+    .insert({
+      phone_number: phone,
+      amount,
+      client_mac: clientMac,
+      ap_mac: apMac,
+      gateway_type: gatewayType,
+      status: "pending",
+    })
+    .select("id")
+    .single();
+
+  if (transactionError || !transaction) {
+    return NextResponse.json({ error: "We could not create the payment request." }, { status: 500 });
+  }
+
   const origin = new URL(request.url).origin;
-  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/v2/stkpush`, {
+  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/v2/stkpush`, { 
     method: "POST",
     headers: {
       "X-API-Key": apiKey,
@@ -48,8 +70,14 @@ export async function POST(request: Request) {
 
   const data = await response.json().catch(() => null);
   if (!response.ok || !data?.checkout_request_id) {
+    await supabase.from("transactions").update({ status: "failed" }).eq("id", transaction.id);
     return NextResponse.json({ error: "We could not start the M-Pesa prompt." }, { status: 502 });
   }
 
-  return NextResponse.json({ checkoutRequestId: data.checkout_request_id });
+  await supabase
+    .from("transactions")
+    .update({ mpesa_checkout_id: data.checkout_request_id })
+    .eq("id", transaction.id);
+
+  return NextResponse.json({ checkoutRequestId: data.checkout_request_id, transactionId: transaction.id });
 }
