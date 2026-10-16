@@ -23,7 +23,7 @@ export const SUBSCRIBERS: Subscriber[] = [
 export const PLAN_PRICES = { Base: 600, Plus: 900, Max: 1200 } as const;
 
 export function formatKes(amount: number) {
-  return `KES ${amount.toLocaleString("en-KE`)}`;
+  return `KES ${amount.toLocaleString("en-KE")}`;
 }
 
 export function gatewayLabel(gateway: GatewayType) {
