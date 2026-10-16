@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 export async function POST(request: Request) {
   const body = await request.json().catch(() => null);
@@ -25,5 +26,9 @@ export async function POST(request: Request) {
   const data = await response.json().catch(() => null);
   if (!response.ok) return NextResponse.json({ error: "Payment status check failed." }, { status: 502 });
 
-  return NextResponse.json({ status: data?.status ?? "pending", receipt: data?.mpesaReceipt ?? null });
+  const status = data?.status === "completed" ? "completed" : data?.status === "failed" ? "failed" : "pending";
+  const supabase = createAdminClient();
+  await supabase.from("transactions").update({ status }).eq("mpesa_checkout_id", checkoutRequestId);
+
+  return NextResponse.json({ status, receipt: data?.mpesaReceipt ?? null });
 }
