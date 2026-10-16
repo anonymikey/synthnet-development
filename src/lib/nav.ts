@@ -49,8 +49,8 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: "Business",
     items: [
-      { label: "Subscribers", icon: Users, planned: true },
-      { label: "Billing", icon: Receipt, planned: true },
+      { label: "Subscribers", icon: Users, href: "/admin/subscribers" },
+      { label: "Billing", icon: Receipt, href: "/admin/billing" },
       { label: "Payments", icon: CreditCard, planned: true },
       { label: "Analytics", icon: BarChart3, planned: true },
     ],
@@ -66,6 +66,8 @@ const BREADCRUMBS: Record<string, string[]> = {
   "/admin/captive-portal": ["Captive portal", "Editor"],
   "/admin/mikrotik": ["Network vendors", "MikroTik"],
   "/admin/omada": ["Network vendors", "TP-Link Omada"],
+  "/admin/subscribers": ["Business", "Subscribers"],
+  "/admin/billing": ["Business", "Billing"],
 };
 
 export function getBreadcrumbs(pathname: string): string[] {
