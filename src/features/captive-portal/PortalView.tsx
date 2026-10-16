@@ -15,7 +15,8 @@ interface Summary {
 }
 
 const PHONE_PATTERN = /^(?:\+?254|0)[17]\d{8}$/;
-const SIMULATION_MS = 2200;
+const STATUS_POLL_MS = 5000;
+const STATUS_MAX_POLLS = 24;
 
 interface PortalViewProps {
   config: PortalConfig;
@@ -24,8 +25,8 @@ interface PortalViewProps {
 }
 
 /**
- * The subscriber-facing captive portal. Every action here is SIMULATED:
- * no M-Pesa request is sent, no voucher is checked, no network access is granted.
+ * The subscriber-facing captive portal. M-Pesa checkout is sent through the
+ * server-side Courtney Tech route so credentials never reach the browser.
  */
 export function PortalView({ config, fullPage = false }: PortalViewProps) {
   const { brand, theme, content, methods, sections, plans } = config;
@@ -92,7 +93,29 @@ export function PortalView({ config, fullPage = false }: PortalViewProps) {
       setSummary(next);
       setStep("success");
       timer.current = null;
-    }, SIMULATION_MS);
+    }, 2200);
+  }
+
+  async function pollPayment(checkoutRequestId: string, next: Summary) {
+    for (let attempt = 0; attempt < STATUS_MAX_POLLS; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, STATUS_POLL_MS));
+      const response = await fetch("/api/payments/status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ checkoutRequestId }),
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error("Unable to check payment status.");
+      if (data?.status === "completed") {
+        setSummary({ ...next, detail: `${next.detail} · Payment received` });
+        setStep("success");
+        return;
+      }
+      if (data?.status === "cancelled" || data?.status === "failed") {
+        throw new Error("The M-Pesa payment was not completed.");
+      }
+    }
+    throw new Error("The payment prompt timed out. Check your phone and try again.");
   }
 
   function cancelPending() {
@@ -116,7 +139,7 @@ export function PortalView({ config, fullPage = false }: PortalViewProps) {
     return false;
   }
 
-  function submitMpesa(event: FormEvent) {
+  async function submitMpesa(event: FormEvent) {
     event.preventDefault();
     if (!selectedPlan) {
       setError("No plan is available to buy yet.");
@@ -127,13 +150,31 @@ export function PortalView({ config, fullPage = false }: PortalViewProps) {
       return;
     }
     if (termsBlocked()) return;
-    begin(
-      {
-        title: selectedPlan.name,
-        detail: `${formatMoney(selectedPlan.price, selectedPlan.currency)} for ${formatDuration(selectedPlan.durationMinutes)}`,
-      },
-      `Check your phone for the ${methods.mpesa.label} prompt.`,
-    );
+
+    const nextSummary = {
+      title: selectedPlan.name,
+      detail: `${formatMoney(selectedPlan.price, selectedPlan.currency)} for ${formatDuration(selectedPlan.durationMinutes)}`,
+    };
+    setError(null);
+    setPendingLabel(`Check your phone for the ${methods.mpesa.label} prompt.`);
+    setStep("processing");
+    try {
+      const response = await fetch("/api/payments/stkpush", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          phone,
+          amount: selectedPlan.price,
+          reference: `PLAN-${selectedPlan.id}`,
+        }),
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data?.checkoutRequestId) throw new Error(data?.error ?? "Unable to start payment.");
+      await pollPayment(data.checkoutRequestId, nextSummary);
+    } catch (checkoutError) {
+      setStep("checkout");
+      setError(checkoutError instanceof Error ? checkoutError.message : "Unable to complete payment.");
+    }
   }
 
   function submitVoucher(event: FormEvent) {
@@ -173,7 +214,7 @@ export function PortalView({ config, fullPage = false }: PortalViewProps) {
       }}
     >
       <p className="bg-black/75 px-3 py-1.5 text-center text-[11px] leading-snug text-white">
-        Demo preview. No payment is sent and no network access is granted.
+        Secure checkout powered by Courtney Tech. Payment confirmation is checked automatically.
       </p>
 
       <div className="mx-auto flex w-full max-w-md flex-1 flex-col gap-5 px-4 py-6">
@@ -209,7 +250,7 @@ export function PortalView({ config, fullPage = false }: PortalViewProps) {
             <div role="status" className="flex flex-col items-center gap-3 py-6 text-center">
               <Loader2 aria-hidden="true" className="size-8 animate-spin" style={{ color: theme.primaryColor }} />
               <p className="text-sm font-medium">{pendingLabel}</p>
-              <p className="text-xs opacity-70">Simulated. This only takes a moment.</p>
+              <p className="text-xs opacity-70">Keep the prompt open on your phone. We&apos;ll confirm it automatically.</p>
               <button
                 type="button"
                 onClick={cancelPending}
@@ -228,7 +269,7 @@ export function PortalView({ config, fullPage = false }: PortalViewProps) {
                 <p className="opacity-80">{summary.detail}</p>
               </div>
               <p className="text-xs opacity-70">
-                Simulated result. The demo did not contact M-Pesa or grant real network access.
+                Payment confirmed. Network access will be provisioned by the hotspot service.
               </p>
               <button
                 type="button"
