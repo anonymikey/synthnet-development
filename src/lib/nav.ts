@@ -52,12 +52,12 @@ export const NAV_GROUPS: NavGroup[] = [
       { label: "Subscribers", icon: Users, href: "/admin/subscribers" },
       { label: "Billing", icon: Receipt, href: "/admin/billing" },
       { label: "Payments", icon: CreditCard, planned: true },
-      { label: "Analytics", icon: BarChart3, planned: true },
+      { label: "Analytics", icon: BarChart3, href: "/admin/analytics" },
     ],
   },
   {
     label: "System",
-    items: [{ label: "Settings", icon: Settings, planned: true }],
+    items: [{ label: "Settings", icon: Settings, href: "/admin/settings" }],
   },
 ];
 
@@ -68,6 +68,8 @@ const BREADCRUMBS: Record<string, string[]> = {
   "/admin/omada": ["Network vendors", "TP-Link Omada"],
   "/admin/subscribers": ["Business", "Subscribers"],
   "/admin/billing": ["Business", "Billing"],
+  "/admin/analytics": ["Business", "Analytics"],
+  "/admin/settings": ["System", "Settings"],
 };
 
 export function getBreadcrumbs(pathname: string): string[] {
