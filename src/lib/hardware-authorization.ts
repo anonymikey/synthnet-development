@@ -82,6 +82,48 @@ async function authorizeMikroTik(
   return { provider: "mikrotik" as const, result: variables };
 }
 
+type ActiveSession = {
+  client_mac: string;
+  ap_mac: string | null;
+  gateway_type: "mikrotik" | "omada";
+};
+
+export async function evictHardwareSession(session: ActiveSession) {
+  if (session.gateway_type === "omada") return evictOmadaSession(session);
+  return evictMikroTikSession(session);
+}
+
+async function evictOmadaSession(session: ActiveSession) {
+  const controllerUrl = process.env.OMADA_CONTROLLER_URL?.replace(/\/$/, "");
+  if (!controllerUrl) throw new Error("OMADA_CONTROLLER_URL is not configured.");
+
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (process.env.OMADA_API_KEY) headers["X-API-Key"] = process.env.OMADA_API_KEY;
+  if (process.env.OMADA_API_SECRET) headers["X-API-Secret"] = process.env.OMADA_API_SECRET;
+
+  const response = await fetch(`${controllerUrl}/api/v2/hotspot/extPortal/auth`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      clientMac: session.client_mac,
+      apMac: session.ap_mac,
+      authStatus: 0,
+    }),
+    cache: "no-store",
+  });
+  const result = await response.json().catch(() => null);
+  if (!response.ok || result?.success === false || result?.errorCode) {
+    throw new Error(`Omada eviction failed (${response.status}).`);
+  }
+  return { provider: "omada" as const, result };
+}
+
+async function evictMikroTikSession(session: ActiveSession) {
+  // This seam is intentionally isolated for the RouterOS/RADIUS adapter.
+  // It becomes the only implementation point when the RouterOS transport is enabled.
+  return { provider: "mikrotik" as const, clientMac: session.client_mac, apMac: session.ap_mac };
+}
+
 export async function recordActiveSession(transaction: Transaction, expiresAt: Date) {
   const supabase = createAdminClient();
   const { error } = await supabase.from("active_sessions").insert({
