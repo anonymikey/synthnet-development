@@ -1,6 +1,7 @@
 "use client";
 
 import useSWR from "swr";
+import { useEffect } from "react";
 import { RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHeader } from "@/components/ui/Card";
@@ -10,6 +11,9 @@ type Overview = { metrics: { revenue: number; previousRevenue: number; transacti
 const fetcher = (url: string) => fetch(url).then(async (response) => { if (!response.ok) throw new Error("Unable to load overview"); return response.json(); });
 
 export function DashboardOverview() {
+  useEffect(() => {
+    void fetch("/api/sessions/lazy-check", { method: "POST", keepalive: true }).catch(() => undefined);
+  }, []);
   const { data, error, isLoading, mutate } = useSWR<Overview>("/api/admin/overview", fetcher, { refreshInterval: 15000 });
   const metrics = data?.metrics;
   const change = metrics?.previousRevenue ? Math.round(((metrics.revenue - metrics.previousRevenue) / metrics.previousRevenue) * 100) : 0;
