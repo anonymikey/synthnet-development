@@ -17,6 +17,7 @@ import {
   Upload,
 } from "lucide-react";
 import Link from "next/link";
+import useSWR from "swr";
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { Badge } from "@/components/ui/Badge";
 import { Button, buttonStyles } from "@/components/ui/Button";
@@ -45,6 +46,19 @@ import type { PortalConfig } from "@/types/portal";
 
 type PanelId = "brand" | "look" | "content" | "plans" | "payment" | "legal";
 type PreviewDevice = "phone" | "desktop";
+type LivePackage = {
+  id: string;
+  name: string;
+  price: number;
+  duration_minutes: number;
+  speed_limit_down_mbps: number;
+  speed_limit_up_mbps: number;
+};
+
+const fetcher = (url: string) => fetch(url).then((response) => {
+  if (!response.ok) throw new Error("Unable to load packages");
+  return response.json() as Promise<LivePackage[]>;
+});
 
 const TABS: readonly TabItem<PanelId>[] = [
   { id: "brand", label: "Brand", icon: Tag },
@@ -67,14 +81,25 @@ export function PortalEditor() {
   const [device, setDevice] = useState<PreviewDevice>("phone");
   const [previewKey, setPreviewKey] = useState(0);
   const [confirmReset, setConfirmReset] = useState(false);
+  const [saving, setSaving] = useState(false);
   const importRef = useRef<HTMLInputElement>(null);
+  const { data: packages = [], error: packagesError, mutate: refreshPackages } = useSWR<LivePackage[]>("/api/packages", fetcher);
+
+  useEffect(() => {
+    if (packagesError) {
+      toast.push({ title: "Packages unavailable", description: "The editor is using the saved local package list until the database responds.", tone: "danger" });
+    }
+  }, [packagesError, toast]);
 
   useEffect(() => {
     const loaded = loadPortalConfig();
-    setSaved(loaded);
-    setDraft(loaded);
+    const withLivePlans = packages.length > 0
+      ? { ...loaded, plans: packages.map((item, index) => ({ id: item.id, name: item.name, description: `${item.speed_limit_down_mbps}/${item.speed_limit_up_mbps} Mbps internet access`, price: Number(item.price), currency: "KES" as const, durationMinutes: item.duration_minutes, speedMbps: item.speed_limit_down_mbps, dataCapMb: null, highlighted: index === 0 })) }
+      : loaded;
+    setSaved(withLivePlans);
+    setDraft(withLivePlans);
     setReady(true);
-  }, []);
+  }, [packages]);
 
   const dirty = useMemo(() => JSON.stringify(saved) !== JSON.stringify(draft), [saved, draft]);
 
@@ -91,20 +116,40 @@ export function PortalEditor() {
     toast.push({ title: "Image not added", description: message, tone: "danger" });
   }
 
-  function handleSave() {
-    if (savePortalConfig(draft)) {
+  async function handleSave() {
+    setSaving(true);
+    try {
+      const response = await fetch("/api/packages/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          plans: draft.plans.map((plan) => ({
+            id: plan.id,
+            name: plan.name,
+            price: plan.price,
+            durationMinutes: plan.durationMinutes,
+            speedMbps: plan.speedMbps,
+            dataCapMb: plan.dataCapMb,
+          })),
+        }),
+      });
+      if (!response.ok) throw new Error("Package sync failed");
+      if (!savePortalConfig(draft)) throw new Error("Portal config could not be saved");
+      await refreshPackages();
       setSaved(draft);
       toast.push({
         title: "Portal saved",
-        description: "Saved in this browser only. The live portal page now shows these changes.",
+        description: "Your plan configuration is now live for the captive portal.",
         tone: "success",
       });
-    } else {
+    } catch {
       toast.push({
         title: "Couldn't save the portal",
-        description: "Browser storage is full or blocked. Try a smaller logo or background image.",
+        description: "The plan changes could not be synced. Check your connection and try again.",
         tone: "danger",
       });
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -229,9 +274,9 @@ export function PortalEditor() {
             <ExternalLink aria-hidden="true" className="size-4" />
             Open live portal
           </Link>
-          <Button size="sm" onClick={handleSave} disabled={!dirty}>
+          <Button size="sm" onClick={handleSave} disabled={!dirty || saving}>
             <Save aria-hidden="true" className="size-4" />
-            Save changes
+            {saving ? "Saving…" : "Save changes"}
           </Button>
         </div>
       </div>
