@@ -1,24 +1,48 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Pencil, Plus, Trash2 } from "lucide-react";
+import useSWR from "swr";
+import { useState } from "react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHeader } from "@/components/ui/Card";
-import { formatMoney } from "@/lib/utils/format";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { formatDuration, formatMoney } from "@/lib/utils/format";
 
-type PaymentStatus = "Paid" | "Pending" | "Failed";
-type Payment = { id: string; tenant: string; unit: string; amount: number; key: string; date: string; status: PaymentStatus; method: string };
-const payments: Payment[] = [
-  { id: "INV-10492", tenant: "Amina Wanjiku", unit: "A-101", amount: 600, key: "QK72H9P3LZ", date: "16 Oct 2026, 09:42", status: "Paid", method: "M-Pesa" },
-  { id: "INV-10491", tenant: "Brian Otieno", unit: "A-102", amount: 900, key: "QK72G1T8NB", date: "16 Oct 2026, 08:18", status: "Paid", method: "M-Pesa" },
-  { id: "INV-10490", tenant: "Carol Njeri", unit: "A-203", amount: 1200, key: "Pending callback", date: "16 Oct 2026, 07:56", status: "Pending", method: "M-Pesa" },
-  { id: "INV-10489", tenant: "David Kamau", unit: "B-104", amount: 600, key: "QK71Z4K2AA", date: "15 Oct 2026, 17:20", status: "Failed", method: "M-Pesa" },
-  { id: "INV-10488", tenant: "Esther Achieng", unit: "B-205", amount: 900, key: "QK71W8C5MV", date: "15 Oct 2026, 12:05", status: "Paid", method: "M-Pesa" },
-];
-const tones = { Paid: "success", Pending: "warning", Failed: "danger" } as const;
+type Package = { id: string; name: string; price: number; duration_minutes: number; speed_limit_down_mbps: number; speed_limit_up_mbps: number };
+const fetcher = (url: string) => fetch(url).then(async (res) => { if (!res.ok) throw new Error("Unable to load packages"); return res.json() as Promise<Package[]>; });
+const blank = { name: "", price: "", duration_minutes: "60", speed_limit_down_mbps: "5", speed_limit_up_mbps: "5" };
+
 export function BillingView() {
-  const [status, setStatus] = useState<"All statuses" | PaymentStatus>("All statuses");
-  const [unit, setUnit] = useState("All rooms");
-  const filtered = useMemo(() => payments.filter((item) => (status === "All statuses" || item.status === status) && (unit === "All rooms" || item.unit.startsWith(unit))), [status, unit]);
-  return <div className="flex flex-col gap-5"><div className="grid gap-3 sm:grid-cols-3">{[{ label: "Collected this month", value: formatMoney(24000, "KES") }, { label: "Successful payments", value: "96.4%" }, { label: "Needs attention", value: "2" }].map((stat) => <Card key={stat.label} className="px-5 py-4"><p className="text-xs font-medium uppercase tracking-wider text-muted">{stat.label}</p><p className="mt-2 text-2xl font-bold text-fg">{stat.value}</p></Card>)}</div><Card><CardHeader title="Billing history" description="M-Pesa payment requests and invoice status for building tenants." action={<Button size="sm" variant="secondary">Export ledger</Button>} /><div className="flex flex-wrap gap-2 border-b border-line px-5 py-3"><label className="sr-only" htmlFor="billing-room">Filter by room</label><select id="billing-room" value={unit} onChange={(event) => setUnit(event.target.value)} className="h-9 rounded-md border border-line bg-raised px-3 text-sm text-fg"><option>All rooms</option><option>A-</option><option>B-</option></select><label className="sr-only" htmlFor="billing-status">Filter by status</label><select id="billing-status" value={status} onChange={(event) => setStatus(event.target.value as typeof status)} className="h-9 rounded-md border border-line bg-raised px-3 text-sm text-fg"><option>All statuses</option><option>Paid</option><option>Pending</option><option>Failed</option></select><span className="ml-auto self-center text-xs text-muted">Showing {filtered.length} transactions</span></div><div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-raised text-xs uppercase tracking-wider text-muted"><tr>{["Invoice", "Tenant", "Amount", "M-Pesa tracking key", "Date", "Status"].map((heading) => <th key={heading} className="px-5 py-3 font-medium">{heading}</th>)}</tr></thead><tbody className="divide-y divide-line">{filtered.map((item) => <tr key={item.id} className="hover:bg-raised/50"><td className="px-5 py-4 font-mono text-xs text-muted">{item.id}</td><td className="px-5 py-4"><span className="font-medium text-fg">{item.tenant}</span><span className="block text-xs text-muted">Unit {item.unit}</span></td><td className="px-5 py-4 font-medium text-fg">{formatMoney(item.amount, "KES")}</td><td className="px-5 py-4 font-mono text-xs text-muted">{item.key}</td><td className="px-5 py-4 text-xs text-muted">{item.date}</td><td className="px-5 py-4"><Badge tone={tones[item.status]}>{item.status}</Badge></td></tr>)}</tbody></table></div></Card></div>;
+  const { data: packages = [], error, mutate } = useSWR<Package[]>("/api/packages", fetcher);
+  const [form, setForm] = useState(blank);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<Package | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+
+  const updateField = (field: keyof typeof blank, value: string) => setForm((current) => ({ ...current, [field]: value }));
+  const reset = () => { setForm(blank); setEditingId(null); };
+  const save = async (event: React.FormEvent) => {
+    event.preventDefault(); setSaving(true); setMessage("");
+    const response = await fetch("/api/packages", { method: editingId ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: editingId, ...form, price: Number(form.price), duration_minutes: Number(form.duration_minutes), speed_limit_down_mbps: Number(form.speed_limit_down_mbps), speed_limit_up_mbps: Number(form.speed_limit_up_mbps) }) });
+    if (!response.ok) { setMessage((await response.json()).error ?? "Unable to save package."); setSaving(false); return; }
+    await mutate(); reset(); setSaving(false); setMessage(editingId ? "Package updated." : "Package added.");
+  };
+  const remove = async () => { if (!pendingDelete) return; const response = await fetch(`/api/packages?id=${encodeURIComponent(pendingDelete.id)}`, { method: "DELETE" }); if (response.ok) { await mutate(); setMessage("Package deleted."); } else setMessage("Unable to delete package."); setPendingDelete(null); };
+  const edit = (item: Package) => { setEditingId(item.id); setForm({ name: item.name, price: String(item.price), duration_minutes: String(item.duration_minutes), speed_limit_down_mbps: String(item.speed_limit_down_mbps), speed_limit_up_mbps: String(item.speed_limit_up_mbps) }); };
+
+  return <div className="flex flex-col gap-5">
+    <Card><CardHeader title="Internet packages" description="Manage the live pricing tiers shown on the captive portal." action={<Badge tone="success">Live Supabase data</Badge>} />
+      <form onSubmit={save} className="grid gap-3 border-b border-line px-5 py-4 sm:grid-cols-2 lg:grid-cols-5">
+        {([['name','Name','text'],['price','Price (KES)','number'],['duration_minutes','Duration (minutes)','number'],['speed_limit_down_mbps','Download Mbps','number'],['speed_limit_up_mbps','Upload Mbps','number']] as const).map(([field, label, type]) => <label key={field} className="flex flex-col gap-1 text-xs font-medium text-muted">{label}<input required min={type === "number" ? "0" : undefined} type={type} value={form[field]} onChange={(event) => updateField(field, event.target.value)} className="h-10 rounded-md border border-line bg-raised px-3 text-sm text-fg outline-none focus:border-accent" /></label>)}
+        <div className="flex items-end gap-2 sm:col-span-2 lg:col-span-5"><Button type="submit" disabled={saving}>{editingId ? <Pencil aria-hidden="true" data-icon="inline-start" /> : <Plus aria-hidden="true" data-icon="inline-start" />}{saving ? "Saving…" : editingId ? "Update package" : "Add package"}</Button>{editingId ? <Button type="button" variant="secondary" onClick={reset}>Cancel</Button> : null}</div>
+      </form>
+      {message ? <p role="status" className="px-5 py-3 text-sm text-accent">{message}</p> : null}
+      {error ? <p role="alert" className="px-5 py-3 text-sm text-danger">Unable to load packages. Check the Supabase connection.</p> : null}
+      <div className="grid gap-3 p-5 sm:grid-cols-2 lg:grid-cols-3">{packages.map((item) => <article key={item.id} className="rounded-lg border border-line bg-raised p-4"><div className="flex items-start justify-between gap-3"><div><h3 className="font-semibold text-fg">{item.name}</h3><p className="mt-1 text-sm text-muted">{formatDuration(item.duration_minutes)} · {item.speed_limit_down_mbps}/{item.speed_limit_up_mbps} Mbps</p></div><p className="text-lg font-bold text-fg">{formatMoney(Number(item.price), "KES")}</p></div><div className="mt-4 flex gap-2"><Button size="sm" variant="secondary" onClick={() => edit(item)}><Pencil aria-hidden="true" data-icon="inline-start" />Edit</Button><Button size="sm" variant="danger" onClick={() => setPendingDelete(item)}><Trash2 aria-hidden="true" data-icon="inline-start" />Delete</Button></div></article>)}</div>
+      {!packages.length && !error ? <p className="px-5 pb-5 text-sm text-muted">No packages yet. Add the first tier above.</p> : null}
+    </Card>
+    <ConfirmDialog open={pendingDelete !== null} title={`Delete “${pendingDelete?.name ?? "package"}”?`} description="This permanently removes the package from the live catalog and the captive portal." confirmLabel="Delete package" destructive onCancel={() => setPendingDelete(null)} onConfirm={remove} />
+  </div>;
 }
