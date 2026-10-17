@@ -10,11 +10,12 @@ import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { formatDuration, formatMoney } from "@/lib/utils/format";
 
 type Package = { id: string; name: string; price: number; duration_minutes: number; speed_limit_down_mbps: number; speed_limit_up_mbps: number };
-const fetcher = (url: string) => fetch(url).then(async (res) => { if (!res.ok) throw new Error("Unable to load packages"); return res.json() as Promise<Package[]>; });
+const fetcher = <T,>(url: string) => fetch(url).then(async (res) => { if (!res.ok) throw new Error("Unable to load live data"); return res.json() as Promise<T>; });
 const blank = { name: "", price: "", duration_minutes: "60", speed_limit_down_mbps: "5", speed_limit_up_mbps: "5" };
 
 export function BillingView() {
   const { data: packages = [], error, mutate } = useSWR<Package[]>("/api/packages", fetcher);
+  const { data: overview } = useSWR<{ transactions: Array<{ id: string; amount: number; status: string; created_at: string }> }>("/api/admin/overview", fetcher, { refreshInterval: 15000 });
   const [form, setForm] = useState(blank);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<Package | null>(null);
@@ -43,6 +44,7 @@ export function BillingView() {
       <div className="grid gap-3 p-5 sm:grid-cols-2 lg:grid-cols-3">{packages.map((item) => <article key={item.id} className="rounded-lg border border-line bg-raised p-4"><div className="flex items-start justify-between gap-3"><div><h3 className="font-semibold text-fg">{item.name}</h3><p className="mt-1 text-sm text-muted">{formatDuration(item.duration_minutes)} · {item.speed_limit_down_mbps}/{item.speed_limit_up_mbps} Mbps</p></div><p className="text-lg font-bold text-fg">{formatMoney(Number(item.price), "KES")}</p></div><div className="mt-4 flex gap-2"><Button size="sm" variant="secondary" onClick={() => edit(item)}><Pencil aria-hidden="true" data-icon="inline-start" />Edit</Button><Button size="sm" variant="danger" onClick={() => setPendingDelete(item)}><Trash2 aria-hidden="true" data-icon="inline-start" />Delete</Button></div></article>)}</div>
       {!packages.length && !error ? <p className="px-5 pb-5 text-sm text-muted">No packages yet. Add the first tier above.</p> : null}
     </Card>
+    <Card><CardHeader title="Payment activity" description="Live transactions received from the Courtney Tech callback pipeline." />{overview?.transactions?.length ? <div className="overflow-x-auto"><table className="w-full min-w-[640px] text-left text-sm"><thead className="bg-raised text-xs uppercase tracking-wider text-muted"><tr>{["Transaction", "Amount", "Status", "Received"].map((heading) => <th key={heading} className="px-5 py-3 font-medium">{heading}</th>)}</tr></thead><tbody className="divide-y divide-line">{overview.transactions.map((item) => <tr key={item.id}><td className="px-5 py-4 font-mono text-xs text-fg">{item.id.slice(0, 8)}</td><td className="px-5 py-4 text-fg">{formatMoney(Number(item.amount), "KES")}</td><td className="px-5 py-4 capitalize text-fg">{item.status}</td><td className="px-5 py-4 text-muted">{new Date(item.created_at).toLocaleString()}</td></tr>)}</tbody></table></div> : <div className="m-5 rounded-lg border border-line bg-raised p-6 text-center"><p className="font-medium text-fg">Awaiting first automated Courtney Tech M-Pesa transaction callback.</p><p className="mt-2 text-sm text-muted">Completed, pending, and failed payments will appear here.</p></div>}</Card>
     <ConfirmDialog open={pendingDelete !== null} title={`Delete “${pendingDelete?.name ?? "package"}”?`} description="This permanently removes the package from the live catalog and the captive portal." confirmLabel="Delete package" destructive onCancel={() => setPendingDelete(null)} onConfirm={remove} />
   </div>;
 }

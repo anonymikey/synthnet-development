@@ -9,7 +9,7 @@ export default function DashboardPage() {
     <>
       <PageHeader
         title="Operations overview"
-        description="Network health, subscribers, billing and alerts in one place. All figures are illustrative demo data. SYNTHNET is not connected to any MikroTik router, Omada controller or payment provider in Phase 1."
+        description="Live network health, subscriber leases, billing activity and payment callbacks from your Supabase operations data."
       />
       <DashboardOverview />
     </>
