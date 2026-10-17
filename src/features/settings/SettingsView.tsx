@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Eye, EyeOff, Save } from "lucide-react";
+import { Eye, EyeOff, Save } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHeader } from "@/components/ui/Card";
