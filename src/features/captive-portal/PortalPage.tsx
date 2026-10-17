@@ -18,6 +18,7 @@ export function PortalPage() {
 
   useEffect(() => {
     setConfig(loadPortalConfig());
+    void fetch("/api/sessions/lazy-check", { method: "POST", keepalive: true }).catch(() => undefined);
   }, []);
 
   const liveConfig = useMemo(() => config ? { ...config, plans: packages.map((item, index) => ({ id: item.id, name: item.name, description: `${item.speed_limit_down_mbps}/${item.speed_limit_up_mbps} Mbps internet access`, price: Number(item.price), currency: "KES" as const, durationMinutes: item.duration_minutes, speedMbps: item.speed_limit_down_mbps, dataCapMb: null, highlighted: index === 0 })) } : null, [config, packages]);
