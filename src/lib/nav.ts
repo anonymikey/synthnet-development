@@ -51,7 +51,7 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { label: "Subscribers", icon: Users, href: "/admin/subscribers" },
       { label: "Billing", icon: Receipt, href: "/admin/billing" },
-      { label: "Payments", icon: CreditCard, planned: true },
+      { label: "Payments", icon: CreditCard, href: "/admin/payments" },
       { label: "Analytics", icon: BarChart3, href: "/admin/analytics" },
     ],
   },
@@ -68,6 +68,7 @@ const BREADCRUMBS: Record<string, string[]> = {
   "/admin/omada": ["Network vendors", "TP-Link Omada"],
   "/admin/subscribers": ["Business", "Subscribers"],
   "/admin/billing": ["Business", "Billing"],
+  "/admin/payments": ["Business", "Payments"],
   "/admin/analytics": ["Business", "Analytics"],
   "/admin/settings": ["System", "Settings"],
 };
