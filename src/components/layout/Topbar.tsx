@@ -61,7 +61,7 @@ export function Topbar({ onOpenMenu }: { onOpenMenu: () => void }) {
       </nav>
 
       <Badge tone="info" className="hidden sm:inline-flex">
-        Phase 1 · demo data
+        Live operations
       </Badge>
 
       <div ref={wrapperRef} className="relative">

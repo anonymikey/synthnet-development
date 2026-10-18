@@ -9,7 +9,7 @@ export default function MikrotikPage() {
     <>
       <PageHeader
         title="MikroTik"
-        description="Router inventory, hotspot leases, billing profiles and the supported hardware catalog. Simulated demo data only."
+        description="Connect MikroTik routers with a one-time WinBox setup command for hotspot and PPPoE operations."
       />
       <MikrotikDashboard />
     </>
