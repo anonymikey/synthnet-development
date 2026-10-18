@@ -27,14 +27,14 @@ export function AccessPointInventory({ aps, selectedId, clientCounts, onSelect, 
         action={
           <Button variant="secondary" size="sm" onClick={onAdd}>
             <Plus aria-hidden="true" className="size-4" />
-            Add demo AP
+            Add Omada AP
           </Button>
         }
       />
       {aps.length === 0 ? (
         <div className="p-8 text-center">
-          <p className="text-sm font-medium text-fg">No access points in this demo site</p>
-          <p className="mt-1 text-sm text-muted">Add a demo access point to explore the catalog models.</p>
+          <p className="text-sm font-medium text-fg">No access points connected yet</p>
+          <p className="mt-1 text-sm text-muted">Add an Omada access point to begin controller adoption.</p>
         </div>
       ) : (
         <ul className="divide-y divide-line">

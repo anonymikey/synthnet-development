@@ -28,7 +28,7 @@ export function ControllerCard({ controller, model, site, adoptedAps }: Controll
       <div className="space-y-4 p-5">
         <div className="flex flex-wrap gap-2">
           <Badge icon={Server}>{model.kind === "software" ? "Local software controller" : "Hardware controller"}</Badge>
-          <Badge>Demo data, not connected</Badge>
+          <Badge>Controller connection pending</Badge>
         </div>
         <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
           <div>
