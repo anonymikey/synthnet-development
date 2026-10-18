@@ -1,6 +1,6 @@
 "use client";
 
-import { Gauge, Globe, LayoutGrid, ListChecks, Users, Wifi } from "lucide-react";
+import { Gauge, Settings, Wifi } from "lucide-react";
 import useSWR from "swr";
 import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/Badge";
@@ -35,10 +35,6 @@ type PanelId = "overview" | "clients" | "portal" | "catalog" | "guide";
 
 const TABS: readonly TabItem<PanelId>[] = [
   { id: "overview", label: "Access points", icon: Wifi },
-  { id: "clients", label: "Clients", icon: Users },
-  { id: "portal", label: "Portal hook", icon: Globe },
-  { id: "catalog", label: "Models", icon: LayoutGrid },
-  { id: "guide", label: "Standalone setup", icon: ListChecks },
 ];
 
 const ID_PREFIX = "omada";
@@ -144,8 +140,13 @@ export function OmadaDashboard() {
           <Badge>Tenant: {OMADA_DEMO_TENANT.name}</Badge>
         </div>
         <p className="mt-3 max-w-3xl text-sm text-muted">
-          Register TP-Link Omada access points here. VunaFlow stores their network identity and tracks controller adoption without storing device passwords.
+          Run a paid hotspot on TP-Link Omada access points. Customers join your WiFi, open the SYNTHNET portal, pay by M-Pesa, and get online without MikroTik.
         </p>
+        <div className="mt-4 flex flex-wrap items-center gap-3 rounded-md border border-line bg-surface px-4 py-3 text-sm">
+          <span className="font-medium text-fg">Portal domain</span>
+          <code className="text-accent">synthnet.anonymiketech.space</code>
+          <a href="/admin/settings" className="inline-flex items-center gap-2 text-muted transition hover:text-fg"><Settings aria-hidden="true" className="size-4" />Change in settings</a>
+        </div>
       </Card>
 
       <Card>
