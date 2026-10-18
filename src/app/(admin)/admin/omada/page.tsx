@@ -9,7 +9,7 @@ export default function OmadaPage() {
     <>
       <PageHeader
         title="TP-Link Omada"
-        description="Controller, access points, wireless clients and the external portal hook. Simulated demo data only, and independent of MikroTik."
+        description="Register TP-Link Omada access points, prepare controller adoption, and monitor the live wireless inventory."
       />
       <OmadaDashboard />
     </>

@@ -1,6 +1,7 @@
 "use client";
 
 import { Gauge, Globe, LayoutGrid, ListChecks, Users, Wifi } from "lucide-react";
+import useSWR from "swr";
 import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/Badge";
 import { Card } from "@/components/ui/Card";
@@ -15,7 +16,7 @@ import { ControllerCard } from "@/features/omada/components/ControllerCard";
 import { OmadaCatalog } from "@/features/omada/components/OmadaCatalog";
 import { PortalPanel } from "@/features/omada/components/PortalPanel";
 import { SetupGuide } from "@/features/omada/components/SetupGuide";
-import { getApModel, getControllerModel } from "@/features/omada/omada.catalog";
+import { getApModel, getControllerModel, OMADA_AP_CATALOG } from "@/features/omada/omada.catalog";
 import { apClientCounts, nextApId } from "@/features/omada/omada.logic";
 import {
   ACCESS_PLANS,
@@ -45,26 +46,34 @@ const ID_PREFIX = "omada";
 export function OmadaDashboard() {
   const toast = useToast();
   const [tab, setTab] = useState<PanelId>("overview");
+  const fetcher = (url: string) => fetch(url).then(async (response) => { const payload = await response.json(); if (!response.ok) throw new Error(payload.error ?? "Unable to load access points."); return payload; });
+  const { data: liveData, mutate } = useSWR<{ accessPoints: Array<{ id: string; name: string; ssid: string; model_code: string; ip_address: string | null; mac_address: string; status: "provisioning" | "online" | "offline"; client_count: number; band: string; firmware: string | null }> }>("/api/admin/omada/access-points", fetcher);
   const [aps, setAps] = useState<OmadaAccessPoint[]>(() => [...SEED_APS]);
   const [clients, setClients] = useState<OmadaClient[]>(() => [...SEED_CLIENTS]);
   const [selectedId, setSelectedId] = useState<string | null>(SEED_APS[0]?.id ?? null);
   const [adding, setAdding] = useState(false);
   const [removing, setRemoving] = useState<OmadaAccessPoint | null>(null);
 
-  const selected = aps.find((ap) => ap.id === selectedId) ?? aps[0] ?? null;
+  const liveAps = (liveData?.accessPoints ?? []).map((ap): OmadaAccessPoint => ({ id: ap.id, tenantId: OMADA_DEMO_TENANT.id, siteId: SEED_SITE.id, name: ap.name, modelId: OMADA_AP_CATALOG.find((model) => model.productCode === ap.model_code)?.id ?? OMADA_AP_CATALOG[0]?.id ?? "", macAddress: ap.mac_address, ipAddress: ap.ip_address ?? "", status: ap.status === "provisioning" ? "unknown" : ap.status, statusNote: ap.status === "provisioning" ? "Awaiting controller adoption" : null, firmware: ap.firmware, channel24: null, channel5: null, isDemoAdded: false }));
+  const displayedAps = liveData ? liveAps : aps;
+  const selected = displayedAps.find((ap) => ap.id === selectedId) ?? displayedAps[0] ?? null;
   const model = selected ? getApModel(selected.modelId) : undefined;
   const controllerModel = getControllerModel(SEED_CONTROLLER.modelId);
   const clientCounts = useMemo(() => apClientCounts(clients), [clients]);
   const selectedClients = useMemo(() => (selected ? clients.filter((client) => client.apId === selected.id) : []), [clients, selected]);
 
-  function handleAdd(input: NewApInput) {
-    const id = nextApId(aps.map((ap) => ap.id));
+  async function handleAdd(input: NewApInput) {
+    const response = await fetch("/api/admin/omada/access-points", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input) });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error ?? "Unable to add access point.");
+    await mutate();
+    const id = payload.accessPoint?.id ?? nextApId(aps.map((ap) => ap.id));
     const ap: OmadaAccessPoint = {
       id,
       tenantId: OMADA_DEMO_TENANT.id,
       siteId: SEED_SITE.id,
       name: input.name,
-      modelId: input.modelId,
+      modelId: OMADA_AP_CATALOG.find((model) => model.productCode === input.modelCode)?.id ?? OMADA_AP_CATALOG[0]?.id ?? "",
       macAddress: "",
       ipAddress: input.ipAddress,
       status: "unknown",
@@ -129,14 +138,13 @@ export function OmadaDashboard() {
     <div className="space-y-6">
       <Card className="p-5">
         <div className="flex flex-wrap items-center gap-2">
-          <Badge tone="info" icon={Gauge}>
-            Demo data, not connected
+          <Badge tone="success" icon={Gauge}>
+            Live Omada inventory
           </Badge>
           <Badge>Tenant: {OMADA_DEMO_TENANT.name}</Badge>
         </div>
         <p className="mt-3 max-w-3xl text-sm text-muted">
-          This module is simulated and independent of MikroTik. It never contacts a controller or an access point. It shows
-          one demo tenant, so its numbers differ from the platform-wide totals on the main dashboard.
+          Register TP-Link Omada access points here. VunaFlow stores their network identity and tracks controller adoption without storing device passwords.
         </p>
       </Card>
 
@@ -152,7 +160,7 @@ export function OmadaDashboard() {
               ) : null}
               <div className="grid gap-6 xl:grid-cols-[minmax(0,380px)_minmax(0,1fr)]">
                 <AccessPointInventory
-                  aps={aps}
+                  aps={displayedAps}
                   selectedId={selected?.id ?? null}
                   clientCounts={clientCounts}
                   onSelect={setSelectedId}
