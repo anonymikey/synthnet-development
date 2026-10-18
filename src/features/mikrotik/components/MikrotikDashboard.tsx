@@ -1,208 +1,41 @@
 "use client";
 
-import { Gauge, LayoutGrid, ListTree, Router as RouterIcon, ScrollText, Users } from "lucide-react";
-import { useMemo, useState } from "react";
+import { Check, Clipboard, Copy, Router as RouterIcon, ShieldCheck, Wifi } from "lucide-react";
+import useSWR from "swr";
+import { useState } from "react";
 import { Badge } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
-import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
-import { Tabs, panelId, tabId, type TabItem } from "@/components/ui/Tabs";
-import { useToast } from "@/components/ui/Toast";
-import { AddRouterDialog, type NewRouterInput } from "@/features/mikrotik/components/AddRouterDialog";
-import { CompatibilityGuide } from "@/features/mikrotik/components/CompatibilityGuide";
-import { HardwareCatalog } from "@/features/mikrotik/components/HardwareCatalog";
-import { LeaseGrid } from "@/features/mikrotik/components/LeaseGrid";
-import { ProfilesPanel } from "@/features/mikrotik/components/ProfilesPanel";
-import { RouterDetail } from "@/features/mikrotik/components/RouterDetail";
-import { RouterInventory } from "@/features/mikrotik/components/RouterInventory";
-import { getModel } from "@/features/mikrotik/mikrotik.catalog";
-import { nextRouterId } from "@/features/mikrotik/mikrotik.logic";
-import {
-  BILLING_PROFILES,
-  DEMO_TENANT,
-  SEED_HOTSPOT_SERVERS,
-  SEED_LEASES,
-  SEED_METRICS,
-  SEED_ROUTERS,
-} from "@/features/mikrotik/mikrotik.mock";
-import type { ClientLease, MikrotikRouter } from "@/features/mikrotik/mikrotik.types";
+import { TextField, SelectField } from "@/components/ui/form";
 
-type PanelId = "overview" | "leases" | "profiles" | "catalog" | "guide";
-
-const TABS: readonly TabItem<PanelId>[] = [
-  { id: "overview", label: "Routers", icon: RouterIcon },
-  { id: "leases", label: "Leases", icon: Users },
-  { id: "profiles", label: "Profiles & servers", icon: ListTree },
-  { id: "catalog", label: "Hardware catalog", icon: LayoutGrid },
-  { id: "guide", label: "Phase 2 guide", icon: ScrollText },
-];
-
-const ID_PREFIX = "mikrotik";
-
-function NeedsRouter({ what }: { what: string }) {
-  return (
-    <Card className="p-8 text-center">
-      <p className="text-sm font-medium text-fg">No router selected</p>
-      <p className="mt-1 text-sm text-muted">Pick a router on the Routers tab to see its {what}.</p>
-    </Card>
-  );
-}
+type Router = { id: string; name: string; location: string | null; router_os: string; service_type: string; status: string; last_seen_at: string | null };
+const fetcher = (url: string) => fetch(url).then((response) => response.json());
 
 export function MikrotikDashboard() {
-  const toast = useToast();
-  const [tab, setTab] = useState<PanelId>("overview");
-  const [routers, setRouters] = useState<MikrotikRouter[]>(() => [...SEED_ROUTERS]);
-  const [leases, setLeases] = useState<ClientLease[]>(() => [...SEED_LEASES]);
-  const [selectedId, setSelectedId] = useState<string | null>(SEED_ROUTERS[0]?.id ?? null);
-  const [adding, setAdding] = useState(false);
-  const [removing, setRemoving] = useState<MikrotikRouter | null>(null);
+  const { data, mutate } = useSWR<{ routers: Router[] }>("/api/admin/routers", fetcher, { refreshInterval: 5000 });
+  const [form, setForm] = useState({ name: "", location: "", routerOs: "routeros7", serviceType: "hotspot" });
+  const [setup, setSetup] = useState<{ token: string; command: string } | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
 
-  const selected = routers.find((router) => router.id === selectedId) ?? routers[0] ?? null;
-  const model = selected ? getModel(selected.modelId) : undefined;
-  const routerLeases = useMemo(
-    () => (selected ? leases.filter((lease) => lease.routerId === selected.id) : []),
-    [leases, selected],
-  );
-  const leaseCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
-    for (const lease of leases) counts[lease.routerId] = (counts[lease.routerId] ?? 0) + 1;
-    return counts;
-  }, [leases]);
-
-  function handleAdd(input: NewRouterInput) {
-    const id = nextRouterId(routers.map((router) => router.id));
-    const router: MikrotikRouter = {
-      id,
-      tenantId: DEMO_TENANT.id,
-      name: input.name,
-      modelId: input.modelId,
-      managementAddress: input.managementAddress,
-      status: "unknown",
-      routerOsVersion: null,
-      isDemoAdded: true,
-    };
-    setRouters((current) => [...current, router]);
-    setSelectedId(id);
-    setAdding(false);
-    toast.push({
-      title: "Demo router added",
-      description: "It only exists in this browser. Nothing was contacted or configured.",
-      tone: "info",
-    });
+  async function createSetup(event: React.FormEvent) {
+    event.preventDefault(); setError(""); setSaving(true);
+    const response = await fetch("/api/admin/routers", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) });
+    const result = await response.json();
+    if (!response.ok) { setError(result.error ?? "Unable to create setup."); setSaving(false); return; }
+    const commandResponse = await fetch("/api/admin/routers/setup-command", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: result.setupToken }) });
+    const command = await commandResponse.json();
+    setSetup({ token: result.setupToken, command: command.command }); setSaving(false); setForm({ name: "", location: "", routerOs: "routeros7", serviceType: "hotspot" }); mutate();
   }
 
-  function handleRemove() {
-    if (!removing) return;
-    const id = removing.id;
-    setRouters((current) => current.filter((router) => router.id !== id));
-    setLeases((current) => current.filter((lease) => lease.routerId !== id));
-    setRemoving(null);
-    toast.push({
-      title: "Removed from the demo inventory",
-      description: "No real router was changed.",
-      tone: "info",
-    });
-  }
+  async function copyCommand() { if (!setup) return; await navigator.clipboard.writeText(setup.command); setCopied(true); setTimeout(() => setCopied(false), 1600); }
 
-  function handleDisconnect(lease: ClientLease) {
-    setLeases((current) => current.filter((item) => item.id !== lease.id));
-    toast.push({
-      title: `${lease.hostName} disconnected (demo)`,
-      description: "Only the demo list changed. No router was contacted.",
-      tone: "info",
-    });
-  }
-
-  return (
-    <div className="space-y-6">
-      <Card className="p-5">
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge tone="info" icon={Gauge}>
-            Demo data, not connected
-          </Badge>
-          <Badge>Tenant: {DEMO_TENANT.name}</Badge>
-        </div>
-        <p className="mt-3 max-w-3xl text-sm text-muted">
-          This module is read-only and simulated. It never writes to a router, and your existing MikroTik configuration is
-          treated as protected. It shows one demo tenant, so its numbers differ from the platform-wide totals on the main
-          dashboard.
-        </p>
-      </Card>
-
-      <Card>
-        <div className="px-5 pt-2">
-          <Tabs tabs={TABS} value={tab} onChange={setTab} idPrefix={ID_PREFIX} label="MikroTik sections" />
-        </div>
-        <div role="tabpanel" id={panelId(ID_PREFIX, tab)} aria-labelledby={tabId(ID_PREFIX, tab)} tabIndex={0} className="p-5">
-          {tab === "overview" ? (
-            <div className="grid gap-6 xl:grid-cols-[minmax(0,380px)_minmax(0,1fr)]">
-              <RouterInventory
-                routers={routers}
-                selectedId={selected?.id ?? null}
-                leaseCounts={leaseCounts}
-                onSelect={setSelectedId}
-                onAdd={() => setAdding(true)}
-              />
-              {selected && model ? (
-                <RouterDetail
-                  router={selected}
-                  model={model}
-                  metrics={SEED_METRICS[selected.id] ?? null}
-                  leaseCount={routerLeases.length}
-                  authorizedCount={routerLeases.filter((lease) => lease.authorized).length}
-                  onRemove={() => setRemoving(selected)}
-                />
-              ) : (
-                <NeedsRouter what="details" />
-              )}
-            </div>
-          ) : null}
-
-          {tab === "leases" ? (
-            selected ? (
-              <LeaseGrid
-                routerName={selected.name}
-                leases={routerLeases}
-                profiles={BILLING_PROFILES}
-                onDisconnect={handleDisconnect}
-              />
-            ) : (
-              <NeedsRouter what="leases" />
-            )
-          ) : null}
-
-          {tab === "profiles" ? (
-            selected ? (
-              <ProfilesPanel
-                routerName={selected.name}
-                servers={SEED_HOTSPOT_SERVERS.filter((server) => server.routerId === selected.id)}
-                profiles={BILLING_PROFILES}
-                leases={routerLeases}
-              />
-            ) : (
-              <NeedsRouter what="hotspot servers and profiles" />
-            )
-          ) : null}
-
-          {tab === "catalog" ? <HardwareCatalog /> : null}
-          {tab === "guide" ? <CompatibilityGuide /> : null}
-        </div>
-      </Card>
-
-      <AddRouterDialog
-        open={adding}
-        existingNames={routers.map((router) => router.name)}
-        onSubmit={handleAdd}
-        onCancel={() => setAdding(false)}
-      />
-      <ConfirmDialog
-        open={removing !== null}
-        title={`Remove ${removing?.name ?? "this router"}?`}
-        description="This removes the router and its demo leases from the inventory in your browser. No real router is changed."
-        confirmLabel="Remove (demo)"
-        destructive
-        onCancel={() => setRemoving(null)}
-        onConfirm={handleRemove}
-      />
+  return <div className="space-y-6">
+    <Card className="border-accent/30 bg-accent/5 p-5"><div className="flex items-start gap-3"><ShieldCheck className="mt-0.5 text-accent" size={20} /><div><h2 className="font-semibold text-fg">Connect a MikroTik router</h2><p className="mt-1 max-w-3xl text-sm text-muted">Create a one-time setup command, paste it into WinBox Terminal, and SYNTHNET will mark the router online when it calls home. No router password is stored.</p></div></div></Card>
+    <div className="grid gap-6 xl:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
+      <Card className="p-5"><div className="mb-5 flex items-center gap-2"><RouterIcon size={18} className="text-accent" /><h2 className="font-semibold text-fg">New router setup</h2></div><form onSubmit={createSetup} className="space-y-4"><TextField label="Router name" value={form.name} onChange={(value) => setForm({ ...form, name: value })} placeholder="Main Office Hotspot" /><TextField label="Location / site" value={form.location} onChange={(value) => setForm({ ...form, location: value })} placeholder="Nairobi CBD" /><SelectField label="RouterOS path" value={form.routerOs} options={[{ value: "routeros7", label: "RouterOS 7" }, { value: "routeros6", label: "RouterOS 6" }, { value: "upload", label: "Upload manually" }]} onChange={(value) => setForm({ ...form, routerOs: value })} /><div><p className="mb-2 text-sm font-medium text-fg">What will this router serve?</p><div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => setForm({ ...form, serviceType: "hotspot" })} className={`rounded-md border p-3 text-left text-sm ${form.serviceType === "hotspot" ? "border-accent bg-accent/10" : "border-line bg-raised"}`}><Wifi size={16} className="mb-2 text-accent" /><strong className="block text-fg">Hotspot vouchers</strong><span className="text-xs text-muted">Captive portal customers</span></button><button type="button" onClick={() => setForm({ ...form, serviceType: "pppoe" })} className={`rounded-md border p-3 text-left text-sm ${form.serviceType === "pppoe" ? "border-accent bg-accent/10" : "border-line bg-raised"}`}><RouterIcon size={16} className="mb-2 text-accent" /><strong className="block text-fg">PPPoE / static</strong><span className="text-xs text-muted">Fixed customers</span></button></div></div>{error ? <p className="text-sm text-red-400">{error}</p> : null}<Button type="submit" disabled={saving} className="w-full">{saving ? "Creating setup…" : "Create setup command"}</Button></form></Card>
+      <div className="space-y-4">{setup ? <Card className="border-accent/40 p-5"><div className="flex items-center justify-between"><div><Badge tone="success" icon={Check}>Setup ready</Badge><h2 className="mt-3 font-semibold text-fg">Paste in WinBox Terminal</h2></div><Button variant="secondary" onClick={copyCommand}>{copied ? <Check size={16} /> : <Copy size={16} />}{copied ? "Copied" : "Copy command"}</Button></div><pre className="mt-4 max-h-52 overflow-auto whitespace-pre-wrap rounded-md border border-line bg-black/30 p-4 text-xs leading-5 text-muted">{setup.command}</pre><p className="mt-3 text-xs text-muted">The command sets reliable NTP, downloads a short-lived SYNTHNET script, imports it, and removes the file. Keep this tab open while the router calls home.</p></Card> : <Card className="flex min-h-64 flex-col items-center justify-center p-8 text-center"><Clipboard className="text-muted" size={28} /><h2 className="mt-3 font-semibold text-fg">Your setup command appears here</h2><p className="mt-1 max-w-md text-sm text-muted">This mirrors the VunaFlow onboarding pattern: choose the RouterOS path, choose hotspot or PPPoE, then copy one command.</p></Card>}<Card className="p-5"><div className="mb-4 flex items-center justify-between"><h2 className="font-semibold text-fg">Connected routers</h2><Badge>{data?.routers?.length ?? 0} total</Badge></div><div className="space-y-2">{(data?.routers ?? []).map((router) => <div key={router.id} className="flex items-center justify-between rounded-md border border-line bg-raised p-3"><div><p className="font-medium text-fg">{router.name}</p><p className="text-xs text-muted">{router.location ?? "No location"} · {router.router_os}</p></div><Badge tone={router.status === "online" ? "success" : "warning"}>{router.status}</Badge></div>)}{!data?.routers?.length ? <p className="py-5 text-center text-sm text-muted">No routers connected yet.</p> : null}</div></Card></div>
     </div>
-  );
+  </div>;
 }
