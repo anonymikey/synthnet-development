@@ -1,120 +1,28 @@
-import { CreditCard, Palette, Router, Wifi } from "lucide-react";
+import { BarChart3, Check, CreditCard, Gauge, Router, ShieldCheck, Ticket, Users } from "lucide-react";
 import Link from "next/link";
 import { Logo } from "@/components/layout/Logo";
 import { buttonStyles } from "@/components/ui/Button";
 import { HeroPortal } from "@/features/landing/HeroPortal";
+import { RoiCalculator } from "@/features/landing/RoiCalculator";
 import { APP_VERSION } from "@/lib/version";
 
 const FEATURES = [
-  {
-    icon: Palette,
-    title: "A captive portal you can edit in minutes",
-    body: "Change the logo, colours, wording, plans and payment options, and watch a live preview update as you type.",
-  },
-  {
-    icon: CreditCard,
-    title: "Subscribers and payments in one place",
-    body: "Plans, invoices and M-Pesa payment screens sit next to the network they pay for. Phase 1 shows them with demo data.",
-  },
-  {
-    icon: Router,
-    title: "MikroTik stays exactly as it is",
-    body: "Your existing MikroTik setup is treated as protected. The MikroTik module is built on its own so nothing about it has to change.",
-  },
-  {
-    icon: Wifi,
-    title: "TP-Link Omada alongside it",
-    body: "Omada controllers, sites and access points get their own module and their own rules, inside the same console.",
-  },
+  [CreditCard, "M-Pesa-ready checkout", "Send a customer from plan selection to a payment prompt, then record the callback against the right device and package."],
+  [Router, "Router onboarding", "Create a setup token and connect RouterOS 6 or 7 with a one-time command instead of passing credentials around."],
+  [Ticket, "Voucher sales", "Generate counter-sale batches, print scratch cards and export a CSV while the real voucher service is being connected."],
+  [Users, "Live sessions", "See who is online, which vendor served them and when their access expires. Close a session from one screen."],
+  [BarChart3, "Revenue you can act on", "Track completed payments, conversion and vendor splits without mixing hotspot sessions with Omada wireless clients."],
+  [ShieldCheck, "Guardrails first", "Keep vendor logic separate and label demo-only operations clearly so testing does not masquerade as production access."],
 ] as const;
 
 export default function LandingPage() {
-  return (
-    <div className="min-h-dvh">
-      <header className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">
-        <Logo />
-        <nav aria-label="Main" className="flex items-center gap-1 sm:gap-2">
-          <Link href="/portal" className={buttonStyles("ghost", "sm", "hidden sm:inline-flex")}>
-            Portal demo
-          </Link>
-          <Link href="/dashboard" className={buttonStyles("ghost", "sm", "hidden sm:inline-flex")}>
-            Dashboard
-          </Link>
-          <Link href="/login" className={buttonStyles("secondary", "sm")}>
-            Sign in
-          </Link>
-        </nav>
-      </header>
-
-      <main>
-        <section className="mx-auto grid max-w-6xl items-center gap-12 px-4 pb-20 pt-10 sm:px-6 lg:grid-cols-[1.1fr_auto] lg:pt-16">
-          <div>
-            <h1 className="max-w-xl text-4xl font-bold leading-[1.1] tracking-tight sm:text-5xl">
-              Hotspot billing and the network behind it, in one console
-            </h1>
-            <p className="mt-5 max-w-lg text-lg text-muted">
-              SYNTHNET brings subscribers, payments, MikroTik routers and TP-Link Omada access points together, with a
-              captive portal your customers actually enjoy using.
-            </p>
-            <div className="mt-8 flex flex-wrap gap-3">
-              <Link href="/admin/captive-portal" className={buttonStyles("primary", "lg")}>
-                Edit the captive portal
-              </Link>
-              <Link href="/dashboard" className={buttonStyles("secondary", "lg")}>
-                Open the dashboard
-              </Link>
-            </div>
-            <p className="mt-6 max-w-md text-sm text-muted">
-              The phone on this page is a working demo. Pick a plan and try it. Nothing is charged and nobody is
-              connected.
-            </p>
-          </div>
-          <HeroPortal />
-        </section>
-
-        <section aria-labelledby="features-heading" className="border-t border-line bg-surface/60">
-          <div className="mx-auto max-w-6xl px-4 py-16 sm:px-6">
-            <h2 id="features-heading" className="max-w-xl text-2xl font-bold tracking-tight sm:text-3xl">
-              One application, two network vendors that stay separate
-            </h2>
-            <p className="mt-3 max-w-2xl text-muted">
-              Screens, tables and charts are shared so everything feels familiar. Vendor logic is not, because MikroTik
-              and Omada do not work the same way.
-            </p>
-            <ul className="mt-10 grid gap-x-10 gap-y-8 sm:grid-cols-2">
-              {FEATURES.map((feature) => (
-                <li key={feature.title} className="flex gap-4">
-                  <span className="flex size-10 shrink-0 items-center justify-center rounded-md border border-line bg-raised text-accent">
-                    <feature.icon aria-hidden="true" className="size-5" />
-                  </span>
-                  <div>
-                    <h3 className="font-semibold">{feature.title}</h3>
-                    <p className="mt-1 text-sm text-muted">{feature.body}</p>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </section>
-
-        <section className="mx-auto max-w-6xl px-4 py-16 sm:px-6">
-          <div className="rounded-lg border border-line bg-surface p-6 shadow-card sm:p-8">
-            <h2 className="text-xl font-bold tracking-tight">This is the Phase 1 interface preview</h2>
-            <p className="mt-2 max-w-2xl text-sm text-muted">
-              Every number, router, payment and subscriber you see is simulated demo data. There is no database, no
-              live sign-in, no M-Pesa processing and no connection to any router or controller yet. Those come after
-              the interface is reviewed and approved.
-            </p>
-          </div>
-        </section>
-      </main>
-
-      <footer className="border-t border-line">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-4 py-8 sm:px-6">
-          <Logo />
-          <p className="text-sm text-muted">SYNTHNET v{APP_VERSION} · Phase 1 demo build</p>
-        </div>
-      </footer>
-    </div>
-  );
+  return <div className="min-h-dvh overflow-hidden bg-ink"><header className="mx-auto flex h-20 max-w-7xl items-center justify-between px-5 sm:px-8"><Logo /><nav aria-label="Main" className="hidden items-center gap-6 text-sm text-muted lg:flex"><a href="#how-it-works" className="hover:text-fg">How it works</a><a href="#features" className="hover:text-fg">Features</a><a href="#pricing" className="hover:text-fg">Pricing</a><a href="#roi" className="hover:text-fg">ROI</a><Link href="/login" className="hover:text-fg">Sign in</Link><Link href="/dashboard" className={buttonStyles("primary", "sm")}>Open console</Link></nav><div className="flex gap-2 lg:hidden"><Link href="/portal" className={buttonStyles("ghost", "sm")}>Demo</Link><Link href="/login" className={buttonStyles("secondary", "sm")}>Sign in</Link></div></header>
+    <main><section className="relative border-y border-line/70 bg-[radial-gradient(circle_at_78%_16%,rgba(124,58,237,0.28),transparent_34%),radial-gradient(circle_at_20%_80%,rgba(34,211,197,0.13),transparent_35%)]"><div className="mx-auto grid max-w-7xl items-center gap-10 px-5 py-16 sm:px-8 lg:grid-cols-[1fr_0.8fr] lg:py-24"><div><p className="text-xs font-semibold uppercase tracking-[0.24em] text-accent">Wi-Fi billing · network control · built for operators</p><h1 className="mt-5 max-w-3xl text-5xl font-bold leading-[0.98] tracking-[-0.05em] text-fg sm:text-7xl">Turn every access point into a paid network.</h1><p className="mt-6 max-w-2xl text-lg leading-8 text-muted">SYNTHNET puts M-Pesa checkout, MikroTik onboarding, vouchers, active sessions and revenue operations in one console you can test before you go live.</p><div className="mt-8 flex flex-wrap gap-3"><Link href="/dashboard" className={buttonStyles("primary", "lg")}>Open the operations console</Link><Link href="/portal" className={buttonStyles("secondary", "lg")}>Try the customer portal</Link></div><div className="mt-6 flex flex-wrap gap-4 text-xs text-muted"><span>Demo data is clearly marked</span><span>·</span><span>Supabase + payment seams ready</span><span>·</span><span>Omada and MikroTik separated</span></div></div><div className="relative"><div className="absolute -inset-5 rounded-[2rem] bg-purple-500/10 blur-3xl" /><HeroPortal /></div></div></section>
+      <section className="border-b border-line bg-surface/70"><div className="mx-auto grid max-w-7xl gap-px px-5 sm:grid-cols-3 sm:px-8"><div className="border-x border-line/70 px-5 py-5"><p className="text-xs uppercase tracking-[0.18em] text-muted">Payment lane</p><p className="mt-2 text-lg font-semibold text-fg">M-Pesa callback-ready</p></div><div className="border-r border-line/70 px-5 py-5"><p className="text-xs uppercase tracking-[0.18em] text-muted">Network lane</p><p className="mt-2 text-lg font-semibold text-fg">RouterOS + Omada</p></div><div className="border-r border-line/70 px-5 py-5"><p className="text-xs uppercase tracking-[0.18em] text-muted">Operator lane</p><p className="mt-2 text-lg font-semibold text-fg">Revenue and sessions</p></div></div></section>
+      <section id="features" className="mx-auto max-w-7xl px-5 py-20 sm:px-8"><div className="max-w-2xl"><p className="text-xs font-semibold uppercase tracking-[0.2em] text-accent">The operator toolkit</p><h2 className="mt-3 text-3xl font-bold tracking-tight text-fg sm:text-4xl">The parts VunaFlow makes obvious, made testable in SynthNet.</h2><p className="mt-4 text-muted">The goal is not to copy another company’s interface. It is to make the important operator outcomes impossible to miss.</p></div><div className="mt-12 grid gap-x-10 gap-y-10 sm:grid-cols-2 lg:grid-cols-3">{FEATURES.map(([Icon, title, body]) => <article key={title} className="border-t border-line pt-5"><Icon aria-hidden="true" className="size-5 text-accent" /><h3 className="mt-4 font-semibold text-fg">{title}</h3><p className="mt-2 text-sm leading-6 text-muted">{body}</p></article>)}</div></section>
+      <section id="how-it-works" className="border-y border-line bg-surface/60"><div className="mx-auto max-w-7xl px-5 py-20 sm:px-8"><div className="grid gap-10 lg:grid-cols-[0.7fr_1.3fr]"><div><p className="text-xs font-semibold uppercase tracking-[0.2em] text-accent">Five-minute path</p><h2 className="mt-3 text-3xl font-bold tracking-tight text-fg">From router to first payment.</h2></div><div className="grid gap-5 sm:grid-cols-2">{[["01", "Create your operator workspace", "Open the console and review the current revenue, gateway and session state."], ["02", "Connect your MikroTik", "Choose RouterOS 6 or 7, generate a setup token and run the one-time command."], ["03", "Set packages and portal copy", "Add plan durations, speeds and prices, then preview the customer-facing portal."], ["04", "Sell access", "Use M-Pesa checkout for online sales or print a local voucher batch for counter sales."], ["05", "Watch the network", "Review revenue and active sessions, then close a session when an operator needs to." ]].map(([number, title, body]) => <article key={number} className="flex gap-4 rounded-lg border border-line bg-raised/60 p-5"><span className="font-mono text-sm text-accent">{number}</span><div><h3 className="font-semibold text-fg">{title}</h3><p className="mt-2 text-sm leading-6 text-muted">{body}</p></div></article>)}</div></div></div></section>
+      <section id="pricing" className="mx-auto max-w-7xl px-5 py-20 sm:px-8"><div className="grid gap-10 lg:grid-cols-[0.7fr_1.3fr] lg:items-start"><div><p className="text-xs font-semibold uppercase tracking-[0.2em] text-accent">Simple operator economics</p><h2 className="mt-3 text-3xl font-bold tracking-tight text-fg">Start with the workflow. Connect the services when ready.</h2><p className="mt-4 text-muted">SynthNet&apos;s current milestone is a testable interface. Your production total will depend on your payment provider, router count, hardware and any support or hosting choices.</p><Link href="/admin/billing" className={buttonStyles("secondary", "md")}>Review packages</Link></div><div className="rounded-2xl border border-accent/30 bg-gradient-to-br from-purple-500/15 to-accent/10 p-6 sm:p-8"><div className="flex items-start justify-between gap-4"><div><p className="text-sm font-semibold text-accent">Operator console</p><h3 className="mt-2 text-2xl font-bold text-fg">All the core surfaces in one place.</h3></div><Gauge aria-hidden="true" className="size-7 text-accent" /></div><div className="mt-7 grid gap-3 sm:grid-cols-2">{["M-Pesa collection workflow", "Router onboarding tokens", "Packages and speed limits", "Voucher batch printing", "Active session controls", "Revenue and conversion view"].map((item) => <p key={item} className="flex items-center gap-2 text-sm text-fg"><Check aria-hidden="true" className="size-4 text-accent" />{item}</p>)}</div></div></div></section>
+      <section id="roi" className="mx-auto max-w-7xl px-5 pb-20 sm:px-8"><RoiCalculator /></section>
+      <section className="border-t border-line bg-surface/60"><div className="mx-auto max-w-7xl px-5 py-20 sm:px-8"><div className="max-w-2xl"><p className="text-xs font-semibold uppercase tracking-[0.2em] text-accent">Questions operators ask</p><h2 className="mt-3 text-3xl font-bold tracking-tight text-fg">Know what is live, what is simulated, and what comes next.</h2></div><div className="mt-10 grid gap-3 lg:grid-cols-2">{[["Can I test without charging a customer?", "Yes. Use the customer portal and the browser-local voucher generator. The UI labels demo behavior and will not claim a real connection."], ["Does the platform connect to MikroTik today?", "The repository includes router onboarding and callback seams. RouterOS and controller credentials still need to be configured and verified in your environment."], ["Can I use Omada and MikroTik together?", "Yes, they remain separate vendor modules so wireless clients and hotspot sessions are not incorrectly counted as the same thing."], ["Where do I start?", "Open the dashboard, review the empty-state guidance, add a package, then try the portal and voucher screens before adding live credentials."]].map(([question, answer]) => <details key={question} className="group rounded-lg border border-line bg-raised px-5 py-4"><summary className="cursor-pointer list-none font-medium text-fg">{question}<span className="float-right text-accent">+</span></summary><p className="mt-3 max-w-2xl text-sm leading-6 text-muted">{answer}</p></details>)}</div></div></section>
+    </main><footer className="border-t border-line"><div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-5 py-8 sm:px-8"><div><Logo /><p className="mt-3 text-xs text-muted">A testable Wi-Fi billing and network operations workspace.</p></div><div className="flex items-center gap-4 text-sm text-muted"><Link href="/dashboard" className="hover:text-fg">Console</Link><Link href="/portal" className="hover:text-fg">Portal</Link><a href="https://wa.me/254700000000" className="hover:text-fg">Talk to support</a><span>v{APP_VERSION}</span></div></div></footer></div>;
 }

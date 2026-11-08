@@ -44,8 +44,7 @@ No environment variables are required. Do not add secrets to this project in Pha
 | `/admin/omada` | Omada module: controller, access points, clients, portal hook, model catalog, standalone setup |
 | `/portal` | The public captive portal page, rendered from the saved config |
 
-Sidebar items marked **Planned** (Subscribers, Billing, Payments, Analytics, Settings) are
-deliberately disabled until their milestones are built.
+Subscribers, Billing, Payments, Analytics and Settings are available. Active sessions and Vouchers are first-class operator routes added in the parity milestone.
 
 ## TP-Link Omada module (`/admin/omada`)
 
