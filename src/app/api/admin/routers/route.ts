@@ -7,9 +7,13 @@ function hashToken(token: string) {
 }
 
 export async function GET() {
-  const { data, error } = await createAdminClient().from("routers").select("id,name,location,router_os,service_type,status,public_ip,api_port,wireguard_enabled,last_seen_at,last_error,created_at,updated_at").order("created_at", { ascending: false });
-  if (error) return NextResponse.json({ error: "Unable to load routers." }, { status: 500 });
-  return NextResponse.json({ routers: data ?? [] });
+  try {
+    const { data, error } = await createAdminClient().from("routers").select("id,name,location,router_os,service_type,status,public_ip,api_port,wireguard_enabled,last_seen_at,last_error,created_at,updated_at").order("created_at", { ascending: false });
+    if (error) return NextResponse.json({ routers: [], configured: false, error: "Router inventory is not configured." });
+    return NextResponse.json({ routers: data ?? [], configured: true });
+  } catch {
+    return NextResponse.json({ routers: [], configured: false, error: "Router inventory is not configured." });
+  }
 }
 
 export async function POST(request: NextRequest) {

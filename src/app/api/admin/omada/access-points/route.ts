@@ -5,12 +5,16 @@ const MAC_ADDRESS = /^([0-9a-f]{2}:){5}[0-9a-f]{2}$/i;
 const IPV4 = /^(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)$/;
 
 export async function GET() {
-  const { data, error } = await createAdminClient()
-    .from("omada_access_points")
-    .select("id,name,ssid,model_code,ip_address,mac_address,status,client_count,band,firmware,last_seen_at,reboot_requested_at,created_at,updated_at")
-    .order("created_at", { ascending: false });
-  if (error) return NextResponse.json({ error: "Unable to load Omada access points." }, { status: 500 });
-  return NextResponse.json({ accessPoints: data ?? [] });
+  try {
+    const { data, error } = await createAdminClient()
+      .from("omada_access_points")
+      .select("id,name,ssid,model_code,ip_address,mac_address,status,client_count,band,firmware,last_seen_at,reboot_requested_at,created_at,updated_at")
+      .order("created_at", { ascending: false });
+    if (error) return NextResponse.json({ accessPoints: [], configured: false, error: "Omada inventory is not configured." });
+    return NextResponse.json({ accessPoints: data ?? [], configured: true });
+  } catch {
+    return NextResponse.json({ accessPoints: [], configured: false, error: "Omada inventory is not configured." });
+  }
 }
 
 export async function DELETE(request: NextRequest) {
