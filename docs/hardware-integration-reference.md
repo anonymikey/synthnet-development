@@ -1,21 +1,8 @@
-# Hardware integration reference
 
-This project’s live hardware setup must follow the vendor documentation below. The safe wizard intentionally does not execute these steps.
+## Current integration implementation
 
-## TP-Link Omada
+The setup wizard now exposes server-side connection tests. MikroTik RouterOS 7 uses the HTTPS REST endpoint under `/rest` with HTTP Basic Auth; RouterOS 6 remains script-generation only because its documented binary API uses TCP 8728/8729 and requires a dedicated binary-protocol client. RouterOS script execution is available only through an explicit backend confirmation phrase and should be used after a backup and interface review.
 
-Source: [TP-Link Omada External Portal Server API](https://support.omadanetworks.com/us/document/13023/)
+Omada Open API uses client credentials to request an access token and then lists sites through `/openapi/v1/{omadacId}/sites`. The wizard tests this connection without storing the client secret. The external portal adapter now follows TP-Link's documented controller-ID path, JSON hotspot login, returned session cookie, `Csrf-Token` header, and millisecond expiry payload.
 
-The controller redirects an EAP client to the external portal with `clientMac`, `apMac`, `ssidName`, `t`, `radioId`, `site`, and `redirectUrl`. The portal must preserve these values through checkout. After successful authentication, the portal logs in to `POST /api/v2/hotspot/login` using the Omada hotspot-operator account, retains the controller cookie and CSRF token, then posts to `/api/v2/hotspot/extPortal/auth?token=...` with the client identity, `time` as the expiry timestamp in microseconds, and `authType=4`. The portal and controller must allow the required HTTPS/certificate and cookie behavior.
-
-Source: [TP-Link Omada device adoption guide](https://support.omadanetworks.com/us/document/13006/)
-
-For local adoption, the AP and controller are normally on the same subnet; the AP appears as Pending and is adopted from the controller. Cloud adoption uses the device key or QR code. A controller, a reachable AP, a selected site and an adopted device are prerequisites; adding a MAC address to SynthNet’s inventory alone is not adoption.
-
-## MikroTik RouterOS
-
-Source: [MikroTik HotSpot captive portal documentation](https://help.mikrotik.com/docs/spaces/ROS/pages/56459266/HotSpot+-+Captive+portal)
-
-A HotSpot setup requires an explicit customer-facing interface, gateway address, address pool, DNS/captive-portal name and authentication settings. RouterOS supports local or RADIUS authentication and a walled garden. HotSpot is IPv4-dependent in the documented behavior and must be run on the bridge/interface rather than a WAN port. RouterOS 7.3+ has RFC 7710 captive-portal signaling requirements involving a DNS name and valid HTTPS certificate.
-
-The current repository onboarding callback only proves that a router fetched a one-time script. A production MikroTik adapter still needs an actual RouterOS/RADIUS or agent transport, reviewed interface settings, rollback/backup handling, and a live test with a customer device before it can be called fully functional.
+Omada guest WLAN creation is deliberately represented as a reviewed provisioning plan rather than a guessed write request. TP-Link exposes the exact WLAN schema through the controller-specific Online API Document, and payloads vary by controller release and permissions. Applying an invented SSID payload could overwrite an existing wireless network. Once the target controller's exact WLAN endpoint/schema is confirmed, the plan endpoint can be extended with a versioned write adapter and a separate confirmation gate.

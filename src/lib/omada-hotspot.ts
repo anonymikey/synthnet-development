@@ -2,18 +2,20 @@ import "server-only";
 
 interface OmadaConfig {
   controllerUrl: string;
+  controllerId: string;
   username: string;
   password: string;
 }
 
 function config(): OmadaConfig {
   const controllerUrl = process.env.OMADA_CONTROLLER_URL?.replace(/\/$/, "");
+  const controllerId = process.env.OMADA_CONTROLLER_ID;
   const username = process.env.OMADA_HOTSPOT_USERNAME;
   const password = process.env.OMADA_HOTSPOT_PASSWORD;
-  if (!controllerUrl || !username || !password) {
-    throw new Error("Omada hotspot controller credentials are not configured.");
+  if (!controllerUrl || !controllerId || !username || !password) {
+    throw new Error("Omada hotspot controller URL, controller ID and operator credentials are not configured.");
   }
-  return { controllerUrl, username, password };
+  return { controllerUrl, controllerId, username, password };
 }
 
 function cookieHeader(setCookie: string | null): string {
@@ -32,10 +34,10 @@ function csrfToken(payload: unknown): string {
 
 async function login() {
   const settings = config();
-  const response = await fetch(`${settings.controllerUrl}/api/v2/hotspot/login`, {
+  const response = await fetch(`${settings.controllerUrl}/${encodeURIComponent(settings.controllerId)}/api/v2/hotspot/login`, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ name: settings.username, password: settings.password }),
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ name: settings.username, password: settings.password }),
     cache: "no-store",
   });
   const payload = await response.json().catch(() => null);
@@ -59,20 +61,22 @@ export async function authorizeOmadaClient(context: OmadaClientContext, duration
   const session = await login();
   const expiresAtMicroseconds = (Date.now() + durationMinutes * 60_000) * 1000;
   const response = await fetch(
-    `${session.settings.controllerUrl}/api/v2/hotspot/extPortal/auth?token=${encodeURIComponent(session.token)}`,
+    `${session.settings.controllerUrl}/${encodeURIComponent(session.settings.controllerId)}/api/v2/hotspot/extPortal/auth`,
     {
       method: "POST",
       headers: {
         Cookie: session.cookie,
-        "Content-Type": "application/x-www-form-urlencoded",
+        "Csrf-Token": session.token,
+        "Content-Type": "application/json",
+        Accept: "application/json",
       },
-      body: new URLSearchParams({
+      body: JSON.stringify({
         clientMac: context.clientMac,
         apMac: context.apMac,
         ssidName: context.ssidName,
         radioId: String(context.radioId),
         site: context.site,
-        time: String(expiresAtMicroseconds),
+        time: String(Math.floor(expiresAtMicroseconds / 1000)),
         authType: "4",
       }),
       cache: "no-store",

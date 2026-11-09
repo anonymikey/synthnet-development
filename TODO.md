@@ -4,6 +4,8 @@
 
 - [ ] `/admin/setup` lets an operator choose MikroTik or Omada, enter required network facts, validate them locally, review a non-executable preview, and copy that preview without contacting hardware or storing credentials.
 - [ ] The wizard warns that live RouterOS changes, Omada adoption, controller credentials and rollback testing require a separate reviewed action.
+- [ ] The wizard can test a RouterOS 7 HTTPS REST connection using credentials only for the request, generate a RouterOS 6/7 reviewable script, and keep live execution behind an explicit confirmation gate.
+- [ ] The wizard can test Omada Open API client-credentials access, list sites, and generate a controller-version-aware guest WLAN/external-portal provisioning plan without guessing or overwriting an SSID.
 
 ## Public product experience
 
