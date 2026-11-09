@@ -12,8 +12,9 @@ export async function POST(request: Request) {
   const phone = normalizePhone(body?.phone);
   const amount = Number(body?.amount);
   const reference = String(body?.reference ?? "").replace(/[^a-zA-Z0-9-]/g, "").slice(0, 12);
+  const packageId = String(body?.packageId ?? "").trim();
 
-  if (!PHONE_PATTERN.test(phone) || !Number.isInteger(amount) || amount < 1 || amount > 70000 || !reference) {
+  if (!PHONE_PATTERN.test(phone) || !Number.isInteger(amount) || amount < 1 || amount > 70000 || !reference || !packageId) {
     return NextResponse.json({ error: "Enter valid payment details." }, { status: 400 });
   }
 
@@ -38,7 +39,14 @@ export async function POST(request: Request) {
       client_mac: clientMac,
       ap_mac: apMac,
       gateway_type: gatewayType,
+      package_id: packageId,
       status: "pending",
+      callback_metadata: {
+        ssidName: String(body?.ssidName ?? "").trim() || null,
+        radioId: Number.isInteger(Number(body?.radioId)) ? Number(body.radioId) : null,
+        site: String(body?.site ?? "").trim() || null,
+        redirectUrl: String(body?.redirectUrl ?? "").trim() || null,
+      },
     })
     .select("id")
     .single();

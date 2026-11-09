@@ -43,7 +43,7 @@ export function OmadaDashboard() {
   const toast = useToast();
   const [tab, setTab] = useState<PanelId>("overview");
   const fetcher = (url: string) => fetch(url).then(async (response) => { const payload = await response.json(); if (!response.ok) throw new Error(payload.error ?? "Unable to load access points."); return payload; });
-  const { data: liveData, mutate } = useSWR<{ accessPoints: Array<{ id: string; name: string; ssid: string; model_code: string; ip_address: string | null; mac_address: string; status: "provisioning" | "online" | "offline"; client_count: number; band: string; firmware: string | null }> }>("/api/admin/omada/access-points", fetcher);
+  const { data: liveData, error: liveError, mutate } = useSWR<{ accessPoints: Array<{ id: string; name: string; ssid: string; model_code: string; ip_address: string | null; mac_address: string; status: "provisioning" | "online" | "offline"; client_count: number; band: string; firmware: string | null }> }>("/api/admin/omada/access-points", fetcher);
   const [aps, setAps] = useState<OmadaAccessPoint[]>(() => [...SEED_APS]);
   const [clients, setClients] = useState<OmadaClient[]>(() => [...SEED_CLIENTS]);
   const [selectedId, setSelectedId] = useState<string | null>(SEED_APS[0]?.id ?? null);
@@ -51,12 +51,13 @@ export function OmadaDashboard() {
   const [removing, setRemoving] = useState<OmadaAccessPoint | null>(null);
 
   const liveAps = (liveData?.accessPoints ?? []).map((ap): OmadaAccessPoint => ({ id: ap.id, tenantId: OMADA_DEMO_TENANT.id, siteId: SEED_SITE.id, name: ap.name, modelId: OMADA_AP_CATALOG.find((model) => model.productCode === ap.model_code)?.id ?? OMADA_AP_CATALOG[0]?.id ?? "", macAddress: ap.mac_address, ipAddress: ap.ip_address ?? "", status: ap.status === "provisioning" ? "unknown" : ap.status, statusNote: ap.status === "provisioning" ? "Awaiting controller adoption" : null, firmware: ap.firmware, channel24: null, channel5: null, isDemoAdded: false }));
-  const displayedAps = liveData ? liveAps : aps;
+  const displayedAps = liveData ? liveAps : liveError ? [] : aps;
+  const displayedClients = useMemo(() => (liveData ? clients : liveError ? [] : clients), [clients, liveData, liveError]);
   const selected = displayedAps.find((ap) => ap.id === selectedId) ?? displayedAps[0] ?? null;
   const model = selected ? getApModel(selected.modelId) : undefined;
   const controllerModel = getControllerModel(SEED_CONTROLLER.modelId);
-  const clientCounts = useMemo(() => apClientCounts(clients), [clients]);
-  const selectedClients = useMemo(() => (selected ? clients.filter((client) => client.apId === selected.id) : []), [clients, selected]);
+  const clientCounts = useMemo(() => apClientCounts(displayedClients), [displayedClients]);
+  const selectedClients = useMemo(() => (selected ? displayedClients.filter((client) => client.apId === selected.id) : []), [displayedClients, selected]);
 
   async function handleAdd(input: NewApInput) {
     const response = await fetch("/api/admin/omada/access-points", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input) });
@@ -156,8 +157,13 @@ export function OmadaDashboard() {
         <div role="tabpanel" id={panelId(ID_PREFIX, tab)} aria-labelledby={tabId(ID_PREFIX, tab)} tabIndex={0} className="p-5">
           {tab === "overview" ? (
             <div className="space-y-6">
-              {controllerModel ? (
-                <ControllerCard controller={SEED_CONTROLLER} model={controllerModel} site={SEED_SITE} adoptedAps={aps.filter((ap) => !ap.isDemoAdded).length} />
+              {liveError ? (
+                <Card className="border-warning/30 bg-warning/5 p-5">
+                  <p className="font-medium text-fg">Omada controller inventory is unavailable</p>
+                  <p className="mt-1 text-sm text-muted">No demo access points are being shown. Configure Supabase and the controller adapter before adding production devices.</p>
+                </Card>
+              ) : controllerModel ? (
+                <ControllerCard controller={SEED_CONTROLLER} model={controllerModel} site={SEED_SITE} adoptedAps={displayedAps.filter((ap) => !ap.isDemoAdded).length} />
               ) : null}
               <div className="grid gap-6 xl:grid-cols-[minmax(0,380px)_minmax(0,1fr)]">
                 <AccessPointInventory
@@ -188,8 +194,8 @@ export function OmadaDashboard() {
 
           {tab === "clients" ? (
             <ClientGrid
-              clients={clients}
-              aps={aps}
+              clients={displayedClients}
+              aps={displayedAps}
               ssids={SSIDS}
               plans={ACCESS_PLANS}
               onDisconnect={handleDisconnect}
@@ -197,7 +203,7 @@ export function OmadaDashboard() {
             />
           ) : null}
 
-          {tab === "portal" ? <PortalPanel config={PORTAL_CONFIG} ssids={SSIDS} aps={aps} site={SEED_SITE} clients={clients} /> : null}
+          {tab === "portal" ? <PortalPanel config={PORTAL_CONFIG} ssids={SSIDS} aps={displayedAps} site={SEED_SITE} clients={displayedClients} /> : null}
           {tab === "catalog" ? <OmadaCatalog /> : null}
           {tab === "guide" ? <SetupGuide /> : null}
         </div>

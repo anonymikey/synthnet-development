@@ -1,140 +1,39 @@
 import { createAdminClient } from "@/lib/supabase/admin";
-
-type Package = {
-  duration_minutes: number;
-  speed_limit_down_mbps: number;
-  speed_limit_up_mbps: number;
-};
-
-type Transaction = {
-  id: string;
-  client_mac: string;
-  ap_mac: string | null;
-  gateway_type: "mikrotik" | "omada";
-  package_id: string | null;
-  packages: Package | Package[] | null;
-};
-
-type HotspotVariables = {
-  mac?: string;
-  ip?: string;
-  username?: string;
-};
-
+import { authorizeOmadaClient, revokeOmadaClient, type OmadaClientContext } from "@/lib/omada-hotspot";
+type Package = { duration_minutes: number; speed_limit_down_mbps: number; speed_limit_up_mbps: number };
+type Transaction = { id: string; client_mac: string; ap_mac: string | null; gateway_type: "mikrotik" | "omada"; package_id: string | null; packages: Package | Package[] | null; callback_metadata?: Record<string, unknown> | null };
+type HotspotVariables = { mac?: string; ip?: string; username?: string };
+function omadaContext(transaction: Transaction): OmadaClientContext {
+  const details = transaction.callback_metadata ?? {};
+  const clientMac = transaction.client_mac.trim();
+  const apMac = transaction.ap_mac?.trim() ?? "";
+  const ssidName = String(details.ssidName ?? "").trim();
+  const site = String(details.site ?? "").trim();
+  const radioId = Number(details.radioId);
+  if (!clientMac || !apMac || !ssidName || !site || !Number.isInteger(radioId) || (radioId !== 0 && radioId !== 1)) {
+    throw new Error("Omada portal context is incomplete. Reopen the captive portal from the controller.");
+  }
+  return { clientMac, apMac, ssidName, site, radioId };
+}
 export async function authorizeHardware(transaction: Transaction, hotspot: HotspotVariables) {
-  const pkg = Array.isArray(transaction.packages)
-    ? transaction.packages[0]
-    : transaction.packages;
+  const pkg = Array.isArray(transaction.packages) ? transaction.packages[0] : transaction.packages;
   if (!pkg) throw new Error("Transaction package is unavailable.");
-
-  if (transaction.gateway_type === "omada") {
-    return authorizeOmada(transaction, pkg);
-  }
-
-  return authorizeMikroTik(transaction, hotspot, pkg.duration_minutes);
-}
-
-async function authorizeOmada(transaction: Transaction, pkg: Package) {
-  const controllerUrl = process.env.OMADA_CONTROLLER_URL?.replace(/\/$/, "");
-  if (!controllerUrl) throw new Error("OMADA_CONTROLLER_URL is not configured.");
-
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (process.env.OMADA_API_KEY) headers["X-API-Key"] = process.env.OMADA_API_KEY;
-  if (process.env.OMADA_API_SECRET) headers["X-API-Secret"] = process.env.OMADA_API_SECRET;
-
-  const response = await fetch(`${controllerUrl}/api/v2/hotspot/extPortal/auth`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      clientMac: transaction.client_mac,
-      apMac: transaction.ap_mac,
-      authStatus: 1,
-      duration: pkg.duration_minutes * 60,
-      upstream: pkg.speed_limit_up_mbps,
-      downstream: pkg.speed_limit_down_mbps,
-    }),
-    cache: "no-store",
-  });
-
-  const result = await response.json().catch(() => null);
-  if (!response.ok || result?.success === false || result?.errorCode) {
-    throw new Error(`Omada authorization failed (${response.status}).`);
-  }
-
-  return { provider: "omada" as const, result };
-}
-
-async function authorizeMikroTik(
-  transaction: Transaction,
-  hotspot: HotspotVariables,
-  durationMinutes: number,
-) {
-  // Keep RouterOS/RADIUS handoff isolated until the controller integration is enabled.
-  const variables = {
-    mac: hotspot.mac ?? transaction.client_mac,
-    ip: hotspot.ip,
-    username: hotspot.username,
-    durationMinutes,
-    transactionId: transaction.id,
-  };
-
+  if (transaction.gateway_type === "omada") return authorizeOmadaClient(omadaContext(transaction), pkg.duration_minutes);
+  const variables = { mac: hotspot.mac ?? transaction.client_mac, ip: hotspot.ip, username: hotspot.username, durationMinutes: pkg.duration_minutes, transactionId: transaction.id };
   if (!variables.mac) throw new Error("MikroTik client MAC is required.");
+  if (!process.env.MIKROTIK_RADIUS_URL) throw new Error("MikroTik hotspot authorization is not configured.");
   return { provider: "mikrotik" as const, result: variables };
 }
-
-type ActiveSession = {
-  client_mac: string;
-  ap_mac: string | null;
-  gateway_type: "mikrotik" | "omada";
-};
-
+type ActiveSession = { client_mac: string; ap_mac: string | null; gateway_type: "mikrotik" | "omada"; callback_metadata?: Record<string, unknown> | null };
 export async function evictHardwareSession(session: ActiveSession) {
-  if (session.gateway_type === "omada") return evictOmadaSession(session);
-  return evictMikroTikSession(session);
-}
-
-async function evictOmadaSession(session: ActiveSession) {
-  const controllerUrl = process.env.OMADA_CONTROLLER_URL?.replace(/\/$/, "");
-  if (!controllerUrl) throw new Error("OMADA_CONTROLLER_URL is not configured.");
-
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (process.env.OMADA_API_KEY) headers["X-API-Key"] = process.env.OMADA_API_KEY;
-  if (process.env.OMADA_API_SECRET) headers["X-API-Secret"] = process.env.OMADA_API_SECRET;
-
-  const response = await fetch(`${controllerUrl}/api/v2/hotspot/extPortal/auth`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      clientMac: session.client_mac,
-      apMac: session.ap_mac,
-      authStatus: 0,
-    }),
-    cache: "no-store",
-  });
-  const result = await response.json().catch(() => null);
-  if (!response.ok || result?.success === false || result?.errorCode) {
-    throw new Error(`Omada eviction failed (${response.status}).`);
+  if (session.gateway_type === "omada") {
+    const details = session.callback_metadata ?? {};
+    return revokeOmadaClient({ clientMac: session.client_mac, apMac: session.ap_mac ?? "", ssidName: String(details.ssidName ?? ""), site: String(details.site ?? ""), radioId: Number(details.radioId) });
   }
-  return { provider: "omada" as const, result };
+  throw new Error("MikroTik session disconnect is not configured; connect the RouterOS/RADIUS adapter first.");
 }
-
-async function evictMikroTikSession(session: ActiveSession) {
-  // This seam is intentionally isolated for the RouterOS/RADIUS adapter.
-  // It becomes the only implementation point when the RouterOS transport is enabled.
-  return { provider: "mikrotik" as const, clientMac: session.client_mac, apMac: session.ap_mac };
-}
-
 export async function recordActiveSession(transaction: Transaction, expiresAt: Date) {
   const supabase = createAdminClient();
-  const { error } = await supabase.from("active_sessions").insert({
-    client_mac: transaction.client_mac,
-    ap_mac: transaction.ap_mac,
-    gateway_type: transaction.gateway_type,
-    session_start: new Date().toISOString(),
-    session_end: expiresAt.toISOString(),
-    status: "active",
-    transaction_id: transaction.id,
-  });
-
+  const { error } = await supabase.from("active_sessions").insert({ client_mac: transaction.client_mac, ap_mac: transaction.ap_mac, gateway_type: transaction.gateway_type, session_start: new Date().toISOString(), session_end: expiresAt.toISOString(), status: "active", transaction_id: transaction.id });
   if (error) throw new Error(`Active session could not be recorded: ${error.message}`);
 }

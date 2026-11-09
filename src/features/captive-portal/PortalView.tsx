@@ -18,17 +18,28 @@ const PHONE_PATTERN = /^(?:\+?254|0)[17]\d{8}$/;
 const STATUS_POLL_MS = 5000;
 const STATUS_MAX_POLLS = 24;
 
+export interface HardwareContext {
+  gatewayType: "omada" | "mikrotik";
+  clientMac: string;
+  apMac?: string;
+  ssidName?: string;
+  radioId?: number;
+  site?: string;
+  redirectUrl?: string;
+}
+
 interface PortalViewProps {
   config: PortalConfig;
   /** Fill the whole viewport (public /portal page) instead of the parent's height. */
   fullPage?: boolean;
+  hardwareContext?: HardwareContext;
 }
 
 /**
  * The subscriber-facing captive portal. M-Pesa checkout is sent through the
  * server-side Courtney Tech route so credentials never reach the browser.
  */
-export function PortalView({ config, fullPage = false }: PortalViewProps) {
+export function PortalView({ config, fullPage = false, hardwareContext }: PortalViewProps) {
   const { brand, theme, content, methods, sections, plans } = config;
   const uid = useId();
 
@@ -166,6 +177,14 @@ export function PortalView({ config, fullPage = false }: PortalViewProps) {
           phone,
           amount: selectedPlan.price,
           reference: `PLAN-${selectedPlan.id}`,
+          packageId: selectedPlan.id,
+          gatewayType: hardwareContext?.gatewayType ?? "mikrotik",
+          clientMac: hardwareContext?.clientMac ?? "unknown",
+          apMac: hardwareContext?.apMac,
+          ssidName: hardwareContext?.ssidName,
+          radioId: hardwareContext?.radioId,
+          site: hardwareContext?.site,
+          redirectUrl: hardwareContext?.redirectUrl,
         }),
       });
       const data = await response.json().catch(() => null);

@@ -17,7 +17,7 @@ export async function POST(request: Request) {
   const { data: transaction, error: transactionError } = await supabase
     .from("transactions")
     .select(
-      "id, client_mac, ap_mac, gateway_type, package_id, packages(duration_minutes, speed_limit_down_mbps, speed_limit_up_mbps)",
+      "id, client_mac, ap_mac, gateway_type, package_id, callback_metadata, packages(duration_minutes, speed_limit_down_mbps, speed_limit_up_mbps)",
     )
     .eq("mpesa_checkout_id", checkoutRequestId)
     .maybeSingle();

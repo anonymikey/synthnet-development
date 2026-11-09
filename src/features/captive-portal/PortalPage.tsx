@@ -4,7 +4,7 @@ import { Pencil } from "lucide-react";
 import Link from "next/link";
 import useSWR from "swr";
 import { useEffect, useMemo, useState } from "react";
-import { PortalView } from "@/features/captive-portal/PortalView";
+import { PortalView, type HardwareContext } from "@/features/captive-portal/PortalView";
 import { loadPortalConfig } from "@/lib/mock-services/portal-storage";
 import type { PortalConfig } from "@/types/portal";
 
@@ -14,10 +14,24 @@ const fetcher = (url: string) => fetch(url).then((response) => response.json() a
 
 export function PortalPage() {
   const [config, setConfig] = useState<PortalConfig | null>(null);
+  const [hardwareContext, setHardwareContext] = useState<HardwareContext | undefined>();
   const { data: packages = [] } = useSWR<Package[]>("/api/packages", fetcher);
 
   useEffect(() => {
     setConfig(loadPortalConfig());
+    const params = new URLSearchParams(window.location.search);
+    const radioId = Number(params.get("radioId"));
+    if (params.get("clientMac") && params.get("apMac") && params.get("ssidName") && params.get("site") && (radioId === 0 || radioId === 1)) {
+      setHardwareContext({
+        gatewayType: "omada",
+        clientMac: params.get("clientMac")!,
+        apMac: params.get("apMac")!,
+        ssidName: params.get("ssidName")!,
+        radioId,
+        site: params.get("site")!,
+        redirectUrl: params.get("redirectUrl") || undefined,
+      });
+    }
     void fetch("/api/sessions/lazy-check", { method: "POST", keepalive: true }).catch(() => undefined);
   }, []);
 
@@ -29,7 +43,7 @@ export function PortalPage() {
 
   return (
     <main>
-      <PortalView config={liveConfig} fullPage />
+      <PortalView config={liveConfig} fullPage hardwareContext={hardwareContext} />
       <Link
         href="/admin/captive-portal"
         className="fixed bottom-3 left-3 inline-flex items-center gap-1.5 rounded-full bg-black/75 px-3 py-1.5 text-xs font-medium text-white hover:bg-black"
