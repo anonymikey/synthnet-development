@@ -1,5 +1,10 @@
 # SYNTHNET parity milestone
 
+## Safe configuration wizard
+
+- [ ] `/admin/setup` lets an operator choose MikroTik or Omada, enter required network facts, validate them locally, review a non-executable preview, and copy that preview without contacting hardware or storing credentials.
+- [ ] The wizard warns that live RouterOS changes, Omada adoption, controller credentials and rollback testing require a separate reviewed action.
+
 ## Public product experience
 
 - [ ] The home page presents SynthNet as a Wi-Fi billing and network operations product with a clear primary CTA, a secondary dashboard/demo CTA, feature proof, setup steps, pricing, ROI calculator, FAQ and support contact.
